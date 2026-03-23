@@ -71,6 +71,8 @@ def obtener_datos_procesados():
     # Crear la columna ticker a partir de movimiento ya transformado
     df["ticker"] = df["movimiento"].replace(map_ticker)
 
+    print(df["ticker"].unique())
+
     # %%
     # AGREGAR LOS TIPOS DE MOVIMIENTO Y NUEVAS COLUMNAS
 
