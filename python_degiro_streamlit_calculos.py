@@ -48,34 +48,28 @@ def obtener_datos_procesados():
     # %%
     # AGREGAR LOS STOCKNAMES DE CADA MOVIMIENTO
 
-    path_stocknames = "INPUT/stocknames.csv"		# CARGA DE FICHERO
+    path_stocknames = "INPUT/stocknames.csv"  # CARGA DE FICHERO
 
     df_stocknames = pd.read_csv(path_stocknames, sep=";")
 
-    values_stocks_names = df_stocknames["Producto"]
-    values_stocks_newNames = df_stocknames["StockName"]
+    # Crear diccionario: Producto -> StockName
+    map_movimiento = dict(zip(df_stocknames["Producto"], df_stocknames["StockName"]))
 
-    map_stocks_name = values_stocks_names.tolist()
-    map_stocks_newName = values_stocks_newNames.tolist()
-
-    df["movimiento"].replace(map_stocks_name, map_stocks_newName, inplace=True)
+    # Reemplazar directamente sobre la columna
+    df["movimiento"] = df["movimiento"].replace(map_movimiento)
 
     # %%
     # AGREGAR LOS STOCK TICKERS DE CADA MOVIMIENTO
 
-    path_stockTickers = "INPUT/stock-tickers.csv"		# CARGA DE FICHERO
+    path_stockTickers = "INPUT/stock-tickers.csv"  # CARGA DE FICHERO
 
     df_stockTickers = pd.read_csv(path_stockTickers, sep=";")
 
-    values_stockNames = df_stockTickers["StockName"]
-    values_stocksTickers = df_stockTickers["Ticker_EV"]
+    # Crear diccionario: StockName -> Ticker_EV
+    map_ticker = dict(zip(df_stockTickers["StockName"], df_stockTickers["Ticker_EV"]))
 
-    map_stockNames = values_stockNames.tolist()
-    map_stockTickers = values_stocksTickers.tolist()
-
-    df["ticker"] = df["movimiento"]
-
-    df["ticker"].replace(map_stockNames, map_stockTickers, inplace=True)
+    # Crear la columna ticker a partir de movimiento ya transformado
+    df["ticker"] = df["movimiento"].replace(map_ticker)
 
     # %%
     # AGREGAR LOS TIPOS DE MOVIMIENTO Y NUEVAS COLUMNAS
