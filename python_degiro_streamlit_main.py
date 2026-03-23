@@ -7,6 +7,8 @@ from datetime import datetime
 from stock_data_functions import *
 from python_degiro_streamlit_calculos import obtener_datos_procesados
 import plotly.graph_objects as go
+import io
+import zipfile
 
 # %%
 st.title("📊 Mi App Streamlit")
@@ -18,12 +20,49 @@ st.title("📊 Mi App Streamlit")
 def cargar_datos():
     return obtener_datos_procesados()
 
+@st.cache_data
+def generar_zip_csv(dataframes_dict):
+    zip_buffer = io.BytesIO()
+
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for nombre_archivo, df in dataframes_dict.items():
+            csv_bytes = df.to_csv(index=False).encode("utf-8")
+            zf.writestr(nombre_archivo, csv_bytes)
+
+    zip_buffer.seek(0)
+    return zip_buffer.getvalue()
+
 df1, df2, df3, df4, df5, df6, df7 = cargar_datos()
 
 df_degiro = df1
 df_portfolio_ticker = df2
 portfolio = df3
 all_stocks = df4
+buy_sell_profit_df = df5
+current_positions_df = df6
+eur_to_usd = df7
+
+# ---------------------------------------------------------------
+# DESCARGA DE CSVs
+# ---------------------------------------------------------------
+csv_files = {
+    "DEGIRO-CSV-ALL.csv": df_degiro,
+    "DEGIRO-CSV-PORTFOLIO-DF_FINAL_TICKER.csv": df_portfolio_ticker,
+    "DEGIRO-CSV-PORTFOLIO-DF_FINAL.csv": portfolio,
+    "DEGIRO-CSV-ALL_STOCK_DATA.csv": all_stocks,
+    "DEGIRO-CSV-BUY_SELL_PROFIT.csv": buy_sell_profit_df,
+    "DEGIRO-CURRENT-PORTFOLIO-AVG-COST.csv": current_positions_df,
+    "FX-RATES-DATA.csv": eur_to_usd,
+}
+
+zip_data = generar_zip_csv(csv_files)
+
+st.download_button(
+    label="📥 Descargar todos los CSV en ZIP",
+    data=zip_data,
+    file_name="degiro_output_csvs.zip",
+    mime="application/zip"
+)
 
 # ---------------------------------------------------------------
 # PALETA DE COLORES Y ESTILO
