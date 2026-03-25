@@ -226,6 +226,95 @@ def plot_dividends_evolution(df_degiro):
     )
     st.plotly_chart(fig, use_container_width=True)
 
+def plot_dividends_yearly_growth(df_degiro):
+    # --- Filtrar dividendos ---
+    df_dividends = df_degiro[df_degiro['tipo_movimiento'] == 'DIVIDENDO'].copy()
+    df_dividends['date'] = pd.to_datetime(df_dividends['date'])
+    df_dividends['year'] = df_dividends['date'].dt.year
+
+    # --- Agrupar por año ---
+    df_grouped = df_dividends.groupby('year', as_index=False)['importe_EUR'].sum()
+    df_grouped = df_grouped.sort_values('year')
+
+    # --- Calcular variación porcentual vs año anterior ---
+    df_grouped['pct_change'] = df_grouped['importe_EUR'].pct_change() * 100
+
+    # --- Crear figura ---
+    fig = go.Figure()
+
+    # Barras: dividendos anuales
+    fig.add_trace(go.Bar(
+        x=df_grouped['year'],
+        y=df_grouped['importe_EUR'],
+        name='Dividendos anuales',
+        marker=dict(
+            color=COLOR_PRINCIPAL,
+            line=dict(color=COLOR_PRINCIPAL, width=1.2)
+        ),
+        hovertemplate='<b>%{x}</b><br>Dividendos: %{y:,.2f} €<extra></extra>'
+    ))
+
+    # Línea: crecimiento % interanual
+    fig.add_trace(go.Scatter(
+        x=df_grouped['year'],
+        y=df_grouped['pct_change'],
+        name='Variación % vs año anterior',
+        mode='lines+markers+text',
+        yaxis='y2',
+        line=dict(color=COLOR_SECUNDARIO, width=2),
+        marker=dict(size=8),
+        text=[
+            f"{v:.1f}%" if pd.notna(v) else ""
+            for v in df_grouped['pct_change']
+        ],
+        textposition='top center',
+        hovertemplate='<b>%{x}</b><br>Variación: %{y:.2f}%<extra></extra>'
+    ))
+
+    # --- Layout ---
+    fig.update_layout(
+        title=dict(
+            text="Dividendos Anuales y Crecimiento Interanual",
+            x=0.5,
+            xanchor='center',
+            font=dict(size=18)
+        ),
+        xaxis=dict(
+            title="Año",
+            tickmode='linear'
+        ),
+        yaxis=dict(
+            title="Dividendos (€)",
+            gridcolor='rgba(200,200,200,0.3)'
+        ),
+        yaxis2=dict(
+            title="Variación (%)",
+            overlaying='y',
+            side='right',
+            showgrid=False
+        ),
+        legend=dict(
+            orientation='h',
+            yanchor='bottom',
+            y=1.02,
+            xanchor='center',
+            x=0.5
+        ),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        hoverlabel=dict(bgcolor=HOVER_BG, font=HOVER_FONT),
+        margin=dict(t=80, b=80, l=60, r=60),
+        shapes=[dict(
+            type="rect",
+            xref="paper",
+            yref="paper",
+            x0=0, y0=0, x1=1, y1=1,
+            line=dict(color=COLOR_BORDE, width=1)
+        )]
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
 
 # -------- NUEVO: GRÁFICO PRECIO + COMPRAS/VENTAS ----------------
 def plot_price_with_trades(selected_ticker, df_prices, df_ops):
@@ -476,6 +565,7 @@ with tab1:
 with tab2:
     plot_dividends_by_company(df_degiro)
     plot_dividends_evolution(df_degiro)
+    plot_dividends_yearly_growth(df_degiro)
 
 with tab3:
     analysis_by_position(df_degiro, all_stocks)
