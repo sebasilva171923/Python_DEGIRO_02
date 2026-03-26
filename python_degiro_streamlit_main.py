@@ -157,24 +157,20 @@ def plot_portfolio_data(portfolio, all_stocks):
     )
     st.plotly_chart(fig, use_container_width=True)
 
-def plot_semester_snapshots(df_degiro, portfolio):
+def plot_semester_snapshots(portfolio):
     # -----------------------------------------------------------
     # 1) PREPARAR DATOS
     # -----------------------------------------------------------
-    df_deg = df_degiro.copy()
-    df_deg['date'] = pd.to_datetime(df_deg['date'])
-
-    df_port = portfolio.copy()
-    df_port['date'] = pd.to_datetime(df_port['date'])
-    df_port = df_port.sort_values('date')
-
-    # --- Filtrar depósitos ---
-    df_dep = df_deg[df_deg['movimiento'].str.upper() == 'DEPOSITOS'].copy()
+    df = portfolio.copy()
+    df['date'] = pd.to_datetime(df['date'])
+    df = df.sort_values('date')
 
     # --- Fecha máxima disponible ---
-    max_date = min(df_deg['date'].max(), df_port['date'].max())
+    max_date = df['date'].max()
 
-    # --- Crear fechas de foto: 31/12/2021 y luego cada 30/06 y 31/12 ---
+    # --- Crear fechas de foto:
+    # primera foto = 31/12/2021
+    # después cada 30/06 y 31/12
     snapshots = [pd.Timestamp("2021-12-31")]
 
     for year in range(2022, max_date.year + 1):
@@ -186,47 +182,40 @@ def plot_semester_snapshots(df_degiro, portfolio):
     df_snap = pd.DataFrame({'snapshot_date': snapshots}).sort_values('snapshot_date')
 
     # -----------------------------------------------------------
-    # 2) DEPÓSITOS ACUMULADOS HASTA CADA FOTO
+    # 2) OBTENER EL ÚLTIMO REGISTRO DISPONIBLE <= FOTO
     # -----------------------------------------------------------
-    dep_values = []
-    for snap in df_snap['snapshot_date']:
-        dep_total = df_dep.loc[df_dep['date'] <= snap, 'importe_EUR'].sum()
-        dep_values.append(dep_total)
+    df_base = df[['date', 'depositos', 'saldo_diario_raw']].copy()
 
-    df_snap['depositos_acum'] = dep_values
-
-    # -----------------------------------------------------------
-    # 3) VALOR PORTFOLIO EN CADA FOTO
-    #    (tomamos el último valor disponible <= fecha snapshot)
-    # -----------------------------------------------------------
-    df_port_aux = df_port[['date', 'acc_price']].sort_values('date').copy()
     df_snap = pd.merge_asof(
         df_snap.sort_values('snapshot_date'),
-        df_port_aux,
+        df_base.sort_values('date'),
         left_on='snapshot_date',
         right_on='date',
         direction='backward'
     )
 
-    df_snap.rename(columns={'acc_price': 'portfolio_valor'}, inplace=True)
+    # -----------------------------------------------------------
+    # 3) CÁLCULOS
+    # -----------------------------------------------------------
+    # Acumulado de depósitos
+    df_snap['depositos_acum'] = df_snap['depositos']
 
-    # -----------------------------------------------------------
-    # 4) NETO = PORTFOLIO - DEPÓSITOS
-    # -----------------------------------------------------------
-    df_snap['neto'] = df_snap['portfolio_valor'] - df_snap['depositos_acum']
+    # Saldo real de la cuenta
+    df_snap['saldo_cuenta'] = df_snap['saldo_diario_raw']
 
-    # -----------------------------------------------------------
-    # 5) CRECIMIENTO % VS FOTO ANTERIOR (POR CADA MÉTRICA)
-    # -----------------------------------------------------------
+    # Neto = saldo - depósitos
+    df_snap['neto'] = df_snap['saldo_cuenta'] - df_snap['depositos_acum']
+
+    # % vs foto anterior
     df_snap['pct_dep'] = df_snap['depositos_acum'].pct_change() * 100
-    df_snap['pct_port'] = df_snap['portfolio_valor'].pct_change() * 100
+    df_snap['pct_saldo'] = df_snap['saldo_cuenta'].pct_change() * 100
     df_snap['pct_neto'] = df_snap['neto'].pct_change() * 100
 
-    # Etiqueta eje X
+    # Etiquetas eje X
     df_snap['label'] = df_snap['snapshot_date'].dt.strftime('%d/%m/%Y')
 
     # -----------------------------------------------------------
-    # 6) CREAR GRÁFICO
+    # 4) GRÁFICO
     # -----------------------------------------------------------
     fig = go.Figure()
 
@@ -234,34 +223,44 @@ def plot_semester_snapshots(df_degiro, portfolio):
         x=df_snap['label'],
         y=df_snap['depositos_acum'],
         name='Depósitos acumulados',
-        marker=dict(color=COLOR_PRINCIPAL, line=dict(color=COLOR_PRINCIPAL, width=1.2)),
+        marker=dict(
+            color=COLOR_PRINCIPAL,
+            line=dict(color=COLOR_PRINCIPAL, width=1.2)
+        ),
         hovertemplate='<b>%{x}</b><br>Depósitos acumulados: %{y:,.2f} €<extra></extra>'
     ))
 
     fig.add_trace(go.Bar(
         x=df_snap['label'],
-        y=df_snap['portfolio_valor'],
-        name='Valor portfolio',
-        marker=dict(color=COLOR_AUX1, line=dict(color=COLOR_AUX1, width=1.2)),
-        hovertemplate='<b>%{x}</b><br>Portfolio: %{y:,.2f} €<extra></extra>'
+        y=df_snap['saldo_cuenta'],
+        name='Saldo cuenta',
+        marker=dict(
+            color=COLOR_AUX1,
+            line=dict(color=COLOR_AUX1, width=1.2)
+        ),
+        hovertemplate='<b>%{x}</b><br>Saldo cuenta: %{y:,.2f} €<extra></extra>'
     ))
 
     fig.add_trace(go.Bar(
         x=df_snap['label'],
         y=df_snap['neto'],
         name='Neto',
-        marker=dict(color=COLOR_SECUNDARIO, line=dict(color=COLOR_SECUNDARIO, width=1.2)),
+        marker=dict(
+            color=COLOR_SECUNDARIO,
+            line=dict(color=COLOR_SECUNDARIO, width=1.2)
+        ),
         hovertemplate='<b>%{x}</b><br>Neto: %{y:,.2f} €<extra></extra>'
     ))
 
     # -----------------------------------------------------------
-    # 7) ANOTACIONES TIPO "TARJETA" SOBRE CADA BARRA
+    # 5) ANOTACIONES / TARJETAS
     # -----------------------------------------------------------
     annotations = []
 
+    # desplazamiento horizontal para cada barra del grupo
     series_info = [
         ('depositos_acum', 'pct_dep', -55),
-        ('portfolio_valor', 'pct_port', 0),
+        ('saldo_cuenta', 'pct_saldo', 0),
         ('neto', 'pct_neto', 55),
     ]
 
@@ -279,7 +278,7 @@ def plot_semester_snapshots(df_degiro, portfolio):
                 x=x,
                 y=y,
                 xshift=xshift,
-                yshift=28,
+                yshift=52,   # más separada hacia arriba
                 text=f"<b>{y:,.2f} €</b>",
                 showarrow=False,
                 font=dict(size=11, color="black"),
@@ -290,7 +289,7 @@ def plot_semester_snapshots(df_degiro, portfolio):
                 borderpad=4
             ))
 
-            # Tarjeta inferior: % vs foto anterior
+            # Tarjeta inferior: crecimiento %
             if pd.notna(pct):
                 pct_color = "#00AA55" if pct >= 0 else "#D62728"
                 pct_text = f"<b>{pct:+.1f}%</b>"
@@ -302,7 +301,7 @@ def plot_semester_snapshots(df_degiro, portfolio):
                 x=x,
                 y=y,
                 xshift=xshift,
-                yshift=6,
+                yshift=18,   # más separada de la tarjeta superior
                 text=pct_text,
                 showarrow=False,
                 font=dict(size=10, color=pct_color),
@@ -314,11 +313,11 @@ def plot_semester_snapshots(df_degiro, portfolio):
             ))
 
     # -----------------------------------------------------------
-    # 8) LAYOUT
+    # 6) LAYOUT
     # -----------------------------------------------------------
     fig.update_layout(
         title=dict(
-            text="Fotos Semestrales: Depósitos, Portfolio y Neto",
+            text="Fotos Semestrales: Depósitos, Saldo y Neto",
             x=0.5,
             xanchor='center',
             font=dict(size=18)
@@ -343,7 +342,7 @@ def plot_semester_snapshots(df_degiro, portfolio):
         plot_bgcolor='rgba(0,0,0,0)',
         paper_bgcolor='rgba(0,0,0,0)',
         hoverlabel=dict(bgcolor=HOVER_BG, font=HOVER_FONT),
-        margin=dict(t=110, b=90, l=60, r=40),
+        margin=dict(t=130, b=90, l=60, r=40),
         shapes=[dict(
             type="rect",
             xref="paper",
