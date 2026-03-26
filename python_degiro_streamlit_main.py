@@ -236,13 +236,12 @@ def plot_dividends_yearly_growth(df_degiro):
     df_grouped = df_dividends.groupby('year', as_index=False)['importe_EUR'].sum()
     df_grouped = df_grouped.sort_values('year')
 
-    # --- Calcular variación porcentual vs año anterior ---
+    # --- Calcular crecimiento vs año anterior ---
     df_grouped['pct_change'] = df_grouped['importe_EUR'].pct_change() * 100
 
-    # --- Crear figura ---
     fig = go.Figure()
 
-    # Barras: dividendos anuales
+    # --- Barras de dividendos anuales ---
     fig.add_trace(go.Bar(
         x=df_grouped['year'],
         y=df_grouped['importe_EUR'],
@@ -254,27 +253,55 @@ def plot_dividends_yearly_growth(df_degiro):
         hovertemplate='<b>%{x}</b><br>Dividendos: %{y:,.2f} €<extra></extra>'
     ))
 
-    # Línea: crecimiento % interanual
-    fig.add_trace(go.Scatter(
-        x=df_grouped['year'],
-        y=df_grouped['pct_change'],
-        name='Variación % vs año anterior',
-        mode='lines+markers+text',
-        yaxis='y2',
-        line=dict(color=COLOR_SECUNDARIO, width=2),
-        marker=dict(size=8),
-        text=[
-            f"{v:.1f}%" if pd.notna(v) else ""
-            for v in df_grouped['pct_change']
-        ],
-        textposition='top center',
-        hovertemplate='<b>%{x}</b><br>Variación: %{y:.2f}%<extra></extra>'
-    ))
+    # --- Crear anotaciones tipo "tarjeta" sobre cada barra ---
+    annotations = []
+
+    for _, row in df_grouped.iterrows():
+        year = row['year']
+        value = row['importe_EUR']
+        pct = row['pct_change']
+
+        # Tarjeta superior: total dividendos
+        annotations.append(dict(
+            x=year,
+            y=value,
+            yshift=28,
+            text=f"<b>{value:,.2f} €</b>",
+            showarrow=False,
+            font=dict(size=12, color="black"),
+            align="center",
+            bgcolor="rgba(245,245,245,0.95)",
+            bordercolor="rgba(180,180,180,0.9)",
+            borderwidth=1,
+            borderpad=4
+        ))
+
+        # Tarjeta inferior: crecimiento %
+        if pd.notna(pct):
+            pct_color = "#00AA55" if pct >= 0 else "#D62728"
+            pct_text = f"<b>{pct:+.1f}%</b>"
+        else:
+            pct_color = "gray"
+            pct_text = "<b>—</b>"
+
+        annotations.append(dict(
+            x=year,
+            y=value,
+            yshift=6,
+            text=pct_text,
+            showarrow=False,
+            font=dict(size=11, color=pct_color),
+            align="center",
+            bgcolor="rgba(245,245,245,0.95)",
+            bordercolor="rgba(180,180,180,0.9)",
+            borderwidth=1,
+            borderpad=3
+        ))
 
     # --- Layout ---
     fig.update_layout(
         title=dict(
-            text="Dividendos Anuales y Crecimiento Interanual",
+            text="Dividendos Anuales y Crecimiento",
             x=0.5,
             xanchor='center',
             font=dict(size=18)
@@ -287,23 +314,11 @@ def plot_dividends_yearly_growth(df_degiro):
             title="Dividendos (€)",
             gridcolor='rgba(200,200,200,0.3)'
         ),
-        yaxis2=dict(
-            title="Variación (%)",
-            overlaying='y',
-            side='right',
-            showgrid=False
-        ),
-        legend=dict(
-            orientation='h',
-            yanchor='bottom',
-            y=1.02,
-            xanchor='center',
-            x=0.5
-        ),
+        annotations=annotations,
         plot_bgcolor='rgba(0,0,0,0)',
         paper_bgcolor='rgba(0,0,0,0)',
         hoverlabel=dict(bgcolor=HOVER_BG, font=HOVER_FONT),
-        margin=dict(t=80, b=80, l=60, r=60),
+        margin=dict(t=100, b=80, l=60, r=40),
         shapes=[dict(
             type="rect",
             xref="paper",
