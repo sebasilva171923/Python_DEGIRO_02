@@ -773,7 +773,7 @@ tab1, tab2, tab3 = st.tabs(["📈 Evolución Portafolio", "💶 Análisis de Div
 with tab1:
     plot_portfolio_trend(portfolio)
     plot_portfolio_data(portfolio, all_stocks)
-    plot_semester_snapshots(df_degiro, portfolio)
+    plot_semester_snapshots(portfolio)
 
 with tab2:
     plot_dividends_by_company(df_degiro)
