@@ -881,7 +881,296 @@ def plot_structural_diversification(df_portfolio_ticker):
             use_container_width=True
         )
 
-        
+# CARTERA DE MARKOWITZ -----------------------------------------------------------------------
+
+def plot_markowitz_analysis(df_portfolio_ticker, all_stocks, n_portfolios=3000, risk_free_rate=0.0):
+    st.subheader("📈 Optimización de Cartera (Markowitz)")
+
+    # -----------------------------------------------------------
+    # 1) OBTENER CARTERA ACTUAL (ÚLTIMA FOTO)
+    # -----------------------------------------------------------
+    df_pos = df_portfolio_ticker.copy()
+    df_pos['date'] = pd.to_datetime(df_pos['date'])
+
+    last_date = df_pos['date'].max()
+    df_last = df_pos[df_pos['date'] == last_date].copy()
+    df_last = df_last[df_last['importe_EUR'].fillna(0) > 0].copy()
+
+    if df_last.empty:
+        st.info("No hay posiciones válidas en la última fecha para calcular Markowitz.")
+        return
+
+    df_last = df_last.groupby('ticker', as_index=False)['importe_EUR'].sum()
+    total_value = df_last['importe_EUR'].sum()
+    df_last['peso'] = df_last['importe_EUR'] / total_value
+
+    tickers = df_last['ticker'].tolist()
+    weights_current = df_last['peso'].values
+
+    # -----------------------------------------------------------
+    # 2) PREPARAR PRECIOS HISTÓRICOS
+    # -----------------------------------------------------------
+    df_prices = all_stocks.copy()
+    df_prices['date'] = pd.to_datetime(df_prices['date'])
+    df_prices['ticker'] = df_prices['ticker'].astype(str).str.strip()
+
+    df_prices = df_prices[df_prices['ticker'].isin(tickers)].copy()
+
+    if df_prices.empty:
+        st.info("No hay histórico de precios para los tickers actuales de la cartera.")
+        return
+
+    # Usamos columna Close
+    prices = df_prices.pivot_table(index='date', columns='ticker', values='Close', aggfunc='last')
+    prices = prices.sort_index()
+
+    # Nos quedamos solo con columnas que existan de verdad
+    common_tickers = [t for t in tickers if t in prices.columns]
+    if len(common_tickers) < 2:
+        st.info("No hay suficientes activos con histórico de precios para calcular Markowitz.")
+        return
+
+    prices = prices[common_tickers].copy()
+
+    # Ajustar pesos actuales a los tickers realmente disponibles en precios
+    df_last = df_last[df_last['ticker'].isin(common_tickers)].copy()
+    df_last['peso'] = df_last['importe_EUR'] / df_last['importe_EUR'].sum()
+
+    tickers = df_last['ticker'].tolist()
+    weights_current = df_last['peso'].values
+    prices = prices[tickers]
+
+    # Eliminar columnas con demasiados NaN y limpiar
+    valid_ratio = prices.notna().mean()
+    keep_cols = valid_ratio[valid_ratio >= 0.7].index.tolist()
+
+    if len(keep_cols) < 2:
+        st.info("No hay suficientes activos con datos históricos consistentes para calcular Markowitz.")
+        return
+
+    prices = prices[keep_cols].copy()
+    df_last = df_last[df_last['ticker'].isin(keep_cols)].copy()
+    df_last['peso'] = df_last['importe_EUR'] / df_last['importe_EUR'].sum()
+
+    tickers = df_last['ticker'].tolist()
+    weights_current = df_last['peso'].values
+    prices = prices[tickers]
+
+    # Relleno suave y cálculo de retornos
+    prices = prices.ffill().dropna(how='all')
+    returns = prices.pct_change().dropna()
+
+    if returns.shape[0] < 30 or returns.shape[1] < 2:
+        st.info("No hay suficientes datos de retornos para construir el análisis de Markowitz.")
+        return
+
+    # -----------------------------------------------------------
+    # 3) ESTADÍSTICAS ANUALIZADAS
+    # -----------------------------------------------------------
+    mean_returns = returns.mean() * 252
+    cov_matrix = returns.cov() * 252
+
+    # -----------------------------------------------------------
+    # 4) MÉTRICAS DE LA CARTERA ACTUAL
+    # -----------------------------------------------------------
+    port_return = np.dot(weights_current, mean_returns)
+    port_vol = np.sqrt(np.dot(weights_current.T, np.dot(cov_matrix, weights_current)))
+    port_sharpe = (port_return - risk_free_rate) / port_vol if port_vol > 0 else np.nan
+
+    # -----------------------------------------------------------
+    # 5) SIMULACIÓN DE CARTERAS ALEATORIAS
+    # -----------------------------------------------------------
+    results = np.zeros((4, n_portfolios))
+    weights_list = []
+
+    n_assets = len(tickers)
+
+    for i in range(n_portfolios):
+        weights = np.random.random(n_assets)
+        weights /= np.sum(weights)
+
+        sim_return = np.dot(weights, mean_returns)
+        sim_vol = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
+        sim_sharpe = (sim_return - risk_free_rate) / sim_vol if sim_vol > 0 else np.nan
+
+        results[0, i] = sim_return
+        results[1, i] = sim_vol
+        results[2, i] = sim_sharpe
+        results[3, i] = i
+        weights_list.append(weights)
+
+    sim_df = pd.DataFrame({
+        'return': results[0],
+        'volatility': results[1],
+        'sharpe': results[2]
+    })
+
+    # Cartera de máximo Sharpe
+    idx_max_sharpe = sim_df['sharpe'].idxmax()
+    best_port = sim_df.loc[idx_max_sharpe]
+    best_weights = weights_list[idx_max_sharpe]
+
+    # Percentil de tu cartera por Sharpe
+    sharpe_percentile = (sim_df['sharpe'] < port_sharpe).mean() * 100 if pd.notna(port_sharpe) else np.nan
+
+    # -----------------------------------------------------------
+    # 6) KPIs
+    # -----------------------------------------------------------
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Retorno esperado", f"{port_return:.2%}")
+    col2.metric("Volatilidad", f"{port_vol:.2%}")
+    col3.metric("Sharpe", f"{port_sharpe:.2f}" if pd.notna(port_sharpe) else "N/A")
+    col4.metric("Percentil eficiencia", f"{sharpe_percentile:.0f}" if pd.notna(sharpe_percentile) else "N/A")
+
+    # Diagnóstico simple
+    if pd.isna(port_sharpe):
+        diag_text = "No se pudo calcular correctamente el ratio Sharpe."
+        diag_color = "#777777"
+    elif sharpe_percentile >= 75:
+        diag_text = "Tu cartera está bien posicionada frente a las combinaciones simuladas."
+        diag_color = "#00AA55"
+    elif sharpe_percentile >= 40:
+        diag_text = "Tu cartera es razonable, pero hay margen de mejora en eficiencia."
+        diag_color = "#FFB000"
+    else:
+        diag_text = "Tu cartera parece poco eficiente frente a combinaciones alternativas."
+        diag_color = "#D62728"
+
+    st.markdown(
+        f"""
+        <div style='background-color:rgba(245,245,245,0.9);
+                    padding:10px 14px;
+                    border-radius:8px;
+                    border:1px solid rgba(180,180,180,0.8);
+                    margin-top:8px;
+                    margin-bottom:14px;'>
+            <span style='font-weight:700; color:#333;'>Diagnóstico:</span>
+            <span style='font-weight:700; color:{diag_color}; margin-left:8px;'>{diag_text}</span>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # -----------------------------------------------------------
+    # 7) GRÁFICO MARKOWITZ
+    # -----------------------------------------------------------
+    fig = go.Figure()
+
+    # Nube de carteras simuladas
+    fig.add_trace(go.Scatter(
+        x=sim_df['volatility'],
+        y=sim_df['return'],
+        mode='markers',
+        name='Carteras simuladas',
+        marker=dict(
+            size=5,
+            color=sim_df['sharpe'],
+            colorscale='Viridis',
+            showscale=True,
+            colorbar=dict(title="Sharpe"),
+            opacity=0.65
+        ),
+        hovertemplate=(
+            "Volatilidad: %{x:.2%}<br>"
+            "Retorno: %{y:.2%}<br>"
+            "Sharpe: %{marker.color:.2f}<extra></extra>"
+        )
+    ))
+
+    # Tu cartera actual
+    fig.add_trace(go.Scatter(
+        x=[port_vol],
+        y=[port_return],
+        mode='markers',
+        name='Tu cartera actual',
+        marker=dict(
+            size=16,
+            color='red',
+            line=dict(color='white', width=1.5)
+        ),
+        hovertemplate=(
+            "<b>Tu cartera actual</b><br>"
+            "Volatilidad: %{x:.2%}<br>"
+            "Retorno: %{y:.2%}<extra></extra>"
+        )
+    ))
+
+    # Cartera de máximo Sharpe
+    fig.add_trace(go.Scatter(
+        x=[best_port['volatility']],
+        y=[best_port['return']],
+        mode='markers',
+        name='Máximo Sharpe',
+        marker=dict(
+            size=16,
+            color='green',
+            line=dict(color='white', width=1.5)
+        ),
+        hovertemplate=(
+            "<b>Cartera máxima Sharpe</b><br>"
+            "Volatilidad: %{x:.2%}<br>"
+            "Retorno: %{y:.2%}<extra></extra>"
+        )
+    ))
+
+    fig.update_layout(
+        title=dict(
+            text=f"Frontera simulada de Markowitz (foto actual: {last_date.strftime('%d/%m/%Y')})",
+            x=0.5,
+            xanchor='center',
+            font=dict(size=18)
+        ),
+        xaxis=dict(
+            title="Volatilidad anualizada",
+            tickformat=".0%",
+            gridcolor='rgba(200,200,200,0.3)'
+        ),
+        yaxis=dict(
+            title="Retorno esperado anualizado",
+            tickformat=".0%",
+            gridcolor='rgba(200,200,200,0.3)'
+        ),
+        legend=dict(
+            orientation='h',
+            yanchor='bottom',
+            y=1.02,
+            xanchor='center',
+            x=0.5
+        ),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        hoverlabel=dict(bgcolor=HOVER_BG, font=HOVER_FONT),
+        margin=dict(t=80, b=60, l=60, r=60),
+        shapes=[dict(
+            type="rect",
+            xref="paper",
+            yref="paper",
+            x0=0, y0=0, x1=1, y1=1,
+            line=dict(color=COLOR_BORDE, width=1)
+        )]
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # -----------------------------------------------------------
+    # 8) TABLA DE PESOS ÓPTIMOS
+    # -----------------------------------------------------------
+    df_opt = pd.DataFrame({
+        'ticker': tickers,
+        'peso_actual': weights_current,
+        'peso_max_sharpe': best_weights
+    }).sort_values('peso_max_sharpe', ascending=False)
+
+    with st.expander("Ver comparación de pesos: actual vs máximo Sharpe"):
+        st.dataframe(
+            df_opt.rename(columns={
+                'peso_actual': 'Peso actual',
+                'peso_max_sharpe': 'Peso máximo Sharpe'
+            }),
+            use_container_width=True
+        )
+
+
 # ---------------------------------------------------------------
 # PESTAÑAS PRINCIPALES
 # ---------------------------------------------------------------
@@ -902,3 +1191,5 @@ with tab3:
 
 with tab4:
     plot_structural_diversification(df_portfolio_ticker)
+    st.divider()
+    plot_markowitz_analysis(df_portfolio_ticker, all_stocks)
