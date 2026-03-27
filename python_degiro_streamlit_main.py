@@ -1464,7 +1464,28 @@ def plot_drawdown_analysis(portfolio):
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Max Drawdown", f"{max_dd:.1%}")
     col2.metric("Drawdown actual", f"{current_dd:.1%}")
-    col3.metric("Fecha mínimo", trough_date.strftime('%d/%m/%Y'))
+    with col3:
+        st.markdown(
+            f"""
+            <div style='background-color:rgba(40,40,40,0.06);
+                        padding:10px;
+                        border-radius:8px;
+                        text-align:center;'>
+                <div style='font-size:0.85rem;
+                            color:gray;
+                            font-weight:600;
+                            margin-bottom:4px;'>
+                    Fecha mínimo
+                </div>
+                <div style='font-size:1.0rem;
+                            color:#333333;
+                            font-weight:700;'>
+                    {trough_date.strftime('%d/%m/%Y')}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
     col4.metric("Recuperación", f"{int(recovery_days)} días" if pd.notna(recovery_days) else "Pendiente")
 
     # Diagnóstico
