@@ -763,11 +763,129 @@ def analysis_by_position(df_degiro, all_stocks):
     else:
         st.info("No se encontró el ticker para esta empresa, no se puede dibujar el gráfico de precio.")
 
+def plot_structural_diversification(df_portfolio_ticker):
+    st.subheader("🧩 Diversificación Estructural")
 
+    df = df_portfolio_ticker.copy()
+    df['date'] = pd.to_datetime(df['date'])
+
+    # --- Tomar última foto disponible ---
+    last_date = df['date'].max()
+    df_last = df[df['date'] == last_date].copy()
+
+    # Filtrar posiciones con valor real
+    df_last = df_last[df_last['importe_EUR'].fillna(0) > 0].copy()
+
+    if df_last.empty:
+        st.info("No hay posiciones disponibles para analizar en la última fecha.")
+        return
+
+    # --- Pesos ---
+    total_value = df_last['importe_EUR'].sum()
+    df_last['peso'] = df_last['importe_EUR'] / total_value
+    df_last = df_last.sort_values('peso', ascending=False)
+
+    # --- Métricas ---
+    n_positions = df_last['ticker'].nunique()
+    max_weight = df_last['peso'].max()
+    hhi = (df_last['peso'] ** 2).sum()
+    n_eff = 1 / hhi if hhi > 0 else np.nan
+
+    # Score simple orientativo
+    if n_eff >= 10:
+        div_label = "Muy diversificada"
+        div_color = "#00AA55"
+    elif n_eff >= 6:
+        div_label = "Diversificación aceptable"
+        div_color = "#FFB000"
+    else:
+        div_label = "Concentrada"
+        div_color = "#D62728"
+
+    # --- KPIs ---
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Nº posiciones", f"{n_positions}")
+    col2.metric("Mayor peso", f"{max_weight:.1%}")
+    col3.metric("HHI", f"{hhi:.3f}")
+    col4.metric("Nº efectivo", f"{n_eff:.2f}")
+
+    st.markdown(
+        f"""
+        <div style='background-color:rgba(245,245,245,0.9);
+                    padding:10px 14px;
+                    border-radius:8px;
+                    border:1px solid rgba(180,180,180,0.8);
+                    margin-top:8px;
+                    margin-bottom:14px;'>
+            <span style='font-weight:700; color:#333;'>Diagnóstico:</span>
+            <span style='font-weight:700; color:{div_color}; margin-left:8px;'>{div_label}</span>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # --- Gráfico de pesos por ticker ---
+    fig = go.Figure()
+
+    fig.add_trace(go.Bar(
+        x=df_last['peso'] * 100,
+        y=df_last['ticker'],
+        orientation='h',
+        text=[f"{v:.1%}" for v in df_last['peso']],
+        textposition='outside',
+        marker=dict(
+            color=COLOR_PRINCIPAL,
+            line=dict(color=COLOR_PRINCIPAL, width=1.2)
+        ),
+        hovertemplate='<b>%{y}</b><br>Peso: %{x:.2f}%<br>Valor: %{customdata:,.2f} €<extra></extra>',
+        customdata=df_last['importe_EUR']
+    ))
+
+    fig.update_layout(
+        title=dict(
+            text=f"Pesos por Posición (foto actual: {last_date.strftime('%d/%m/%Y')})",
+            x=0.5,
+            xanchor='center',
+            font=dict(size=18)
+        ),
+        xaxis=dict(
+            title="Peso en cartera (%)",
+            gridcolor='rgba(200,200,200,0.3)'
+        ),
+        yaxis=dict(
+            title="Ticker",
+            autorange='reversed'
+        ),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        hoverlabel=dict(bgcolor=HOVER_BG, font=HOVER_FONT),
+        margin=dict(t=80, b=60, l=60, r=60),
+        shapes=[dict(
+            type="rect",
+            xref="paper",
+            yref="paper",
+            x0=0, y0=0, x1=1, y1=1,
+            line=dict(color=COLOR_BORDE, width=1)
+        )]
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # --- Tabla opcional ---
+    with st.expander("Ver detalle de pesos"):
+        st.dataframe(
+            df_last[['ticker', 'importe_EUR', 'peso']].rename(columns={
+                'importe_EUR': 'Valor (€)',
+                'peso': 'Peso'
+            }),
+            use_container_width=True
+        )
+
+        
 # ---------------------------------------------------------------
 # PESTAÑAS PRINCIPALES
 # ---------------------------------------------------------------
-tab1, tab2, tab3 = st.tabs(["📈 Evolución Portafolio", "💶 Análisis de Dividendos", "📊 Análisis por Posición"])
+tab1, tab2, tab3, tab4 = st.tabs(["📈 Evolución Portafolio", "💶 Análisis de Dividendos", "📊 Análisis por Posición", "📊 Análisis de la Cartera"])
 
 with tab1:
     plot_portfolio_trend(portfolio)
@@ -781,3 +899,6 @@ with tab2:
 
 with tab3:
     analysis_by_position(df_degiro, all_stocks)
+
+with tab4:
+    plot_structural_diversification(df_portfolio_ticker)
