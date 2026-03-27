@@ -1174,6 +1174,235 @@ def plot_markowitz_analysis(df_portfolio_ticker, all_stocks, n_portfolios=3000, 
             use_container_width=True
         )
 
+# CONTRIBUCION AL RIESGO ---------------------------------------
+
+def plot_risk_contribution(df_portfolio_ticker, all_stocks):
+    st.subheader("⚠️ Contribución al Riesgo")
+
+    # -----------------------------------------------------------
+    # 1) OBTENER CARTERA ACTUAL
+    # -----------------------------------------------------------
+    df_pos = df_portfolio_ticker.copy()
+    df_pos['date'] = pd.to_datetime(df_pos['date'])
+
+    last_date = df_pos['date'].max()
+    df_last = df_pos[df_pos['date'] == last_date].copy()
+    df_last = df_last[df_last['importe_EUR'].fillna(0) > 0].copy()
+
+    if df_last.empty:
+        st.info("No hay posiciones válidas en la última fecha para calcular contribución al riesgo.")
+        return
+
+    df_last = df_last.groupby('ticker', as_index=False)['importe_EUR'].sum()
+    df_last['peso'] = df_last['importe_EUR'] / df_last['importe_EUR'].sum()
+
+    tickers = df_last['ticker'].tolist()
+
+    # -----------------------------------------------------------
+    # 2) PREPARAR PRECIOS HISTÓRICOS
+    # -----------------------------------------------------------
+    df_prices = all_stocks.copy()
+    df_prices['date'] = pd.to_datetime(df_prices['date'])
+    df_prices['ticker'] = df_prices['ticker'].astype(str).str.strip()
+
+    df_prices = df_prices[df_prices['ticker'].isin(tickers)].copy()
+
+    if df_prices.empty:
+        st.info("No hay histórico de precios para los tickers actuales de la cartera.")
+        return
+
+    prices = df_prices.pivot_table(index='date', columns='ticker', values='Close', aggfunc='last')
+    prices = prices.sort_index()
+
+    # Mantener solo tickers comunes
+    common_tickers = [t for t in tickers if t in prices.columns]
+    if len(common_tickers) < 2:
+        st.info("No hay suficientes activos con histórico de precios para calcular contribución al riesgo.")
+        return
+
+    prices = prices[common_tickers].copy()
+    df_last = df_last[df_last['ticker'].isin(common_tickers)].copy()
+    df_last['peso'] = df_last['importe_EUR'] / df_last['importe_EUR'].sum()
+
+    tickers = df_last['ticker'].tolist()
+    weights = df_last['peso'].values
+    prices = prices[tickers]
+
+    # Limpiar
+    valid_ratio = prices.notna().mean()
+    keep_cols = valid_ratio[valid_ratio >= 0.7].index.tolist()
+
+    if len(keep_cols) < 2:
+        st.info("No hay suficientes activos con datos históricos consistentes para calcular contribución al riesgo.")
+        return
+
+    prices = prices[keep_cols].copy()
+    df_last = df_last[df_last['ticker'].isin(keep_cols)].copy()
+    df_last['peso'] = df_last['importe_EUR'] / df_last['importe_EUR'].sum()
+
+    tickers = df_last['ticker'].tolist()
+    weights = df_last['peso'].values
+    prices = prices[tickers]
+
+    prices = prices.ffill().dropna(how='all')
+    returns = prices.pct_change().dropna()
+
+    if returns.shape[0] < 30 or returns.shape[1] < 2:
+        st.info("No hay suficientes retornos para calcular contribución al riesgo.")
+        return
+
+    # -----------------------------------------------------------
+    # 3) MATRIZ DE COVARIANZAS Y RIESGO
+    # -----------------------------------------------------------
+    cov_matrix = returns.cov() * 252  # anualizada
+
+    portfolio_vol = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
+
+    if portfolio_vol <= 0:
+        st.info("No se pudo calcular la volatilidad de la cartera.")
+        return
+
+    # Contribución marginal al riesgo
+    marginal_risk = np.dot(cov_matrix, weights) / portfolio_vol
+
+    # Contribución total al riesgo
+    risk_contribution = weights * marginal_risk
+
+    # % contribución al riesgo
+    risk_contribution_pct = risk_contribution / risk_contribution.sum()
+
+    # -----------------------------------------------------------
+    # 4) DATAFRAME FINAL
+    # -----------------------------------------------------------
+    df_risk = pd.DataFrame({
+        'ticker': tickers,
+        'peso': weights,
+        'contrib_riesgo': risk_contribution_pct
+    })
+
+    df_risk['diff'] = df_risk['contrib_riesgo'] - df_risk['peso']
+    df_risk = df_risk.sort_values('contrib_riesgo', ascending=False)
+
+    # KPIs
+    top_risk_ticker = df_risk.iloc[0]['ticker']
+    top_risk_pct = df_risk.iloc[0]['contrib_riesgo']
+    max_weight_ticker = df_risk.sort_values('peso', ascending=False).iloc[0]['ticker']
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Mayor contribuidor al riesgo", f"{top_risk_ticker}")
+    col2.metric("% riesgo aportado", f"{top_risk_pct:.1%}")
+    col3.metric("Mayor peso actual", f"{max_weight_ticker}")
+
+    # Diagnóstico
+    if top_risk_pct > 0.35:
+        diag_text = f"{top_risk_ticker} domina claramente el riesgo total de la cartera."
+        diag_color = "#D62728"
+    elif top_risk_pct > 0.20:
+        diag_text = f"{top_risk_ticker} es el principal foco de riesgo, aunque no de forma extrema."
+        diag_color = "#FFB000"
+    else:
+        diag_text = "El riesgo parece relativamente repartido entre varios activos."
+        diag_color = "#00AA55"
+
+    st.markdown(
+        f"""
+        <div style='background-color:rgba(245,245,245,0.9);
+                    padding:10px 14px;
+                    border-radius:8px;
+                    border:1px solid rgba(180,180,180,0.8);
+                    margin-top:8px;
+                    margin-bottom:14px;'>
+            <span style='font-weight:700; color:#333;'>Diagnóstico:</span>
+            <span style='font-weight:700; color:{diag_color}; margin-left:8px;'>{diag_text}</span>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # -----------------------------------------------------------
+    # 5) GRÁFICO COMPARATIVO: PESO VS RIESGO
+    # -----------------------------------------------------------
+    fig = go.Figure()
+
+    fig.add_trace(go.Bar(
+        x=df_risk['peso'] * 100,
+        y=df_risk['ticker'],
+        orientation='h',
+        name='Peso actual',
+        marker=dict(
+            color=COLOR_PRINCIPAL,
+            line=dict(color=COLOR_PRINCIPAL, width=1.0)
+        ),
+        hovertemplate='<b>%{y}</b><br>Peso: %{x:.2f}%<extra></extra>'
+    ))
+
+    fig.add_trace(go.Bar(
+        x=df_risk['contrib_riesgo'] * 100,
+        y=df_risk['ticker'],
+        orientation='h',
+        name='Contribución al riesgo',
+        marker=dict(
+            color=COLOR_SECUNDARIO,
+            line=dict(color=COLOR_SECUNDARIO, width=1.0)
+        ),
+        hovertemplate='<b>%{y}</b><br>Riesgo aportado: %{x:.2f}%<extra></extra>'
+    ))
+
+    fig.update_layout(
+        title=dict(
+            text=f"Peso vs Contribución al Riesgo (foto actual: {last_date.strftime('%d/%m/%Y')})",
+            x=0.5,
+            xanchor='center',
+            font=dict(size=18)
+        ),
+        xaxis=dict(
+            title="% sobre el total",
+            gridcolor='rgba(200,200,200,0.3)'
+        ),
+        yaxis=dict(
+            title="Ticker",
+            autorange='reversed'
+        ),
+        barmode='group',
+        legend=dict(
+            orientation='h',
+            yanchor='bottom',
+            y=1.02,
+            xanchor='center',
+            x=0.5
+        ),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        hoverlabel=dict(bgcolor=HOVER_BG, font=HOVER_FONT),
+        margin=dict(t=80, b=60, l=60, r=60),
+        shapes=[dict(
+            type="rect",
+            xref="paper",
+            yref="paper",
+            x0=0, y0=0, x1=1, y1=1,
+            line=dict(color=COLOR_BORDE, width=1)
+        )]
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # -----------------------------------------------------------
+    # 6) TABLA DETALLE
+    # -----------------------------------------------------------
+    with st.expander("Ver detalle de contribución al riesgo"):
+        df_risk_show = df_risk.copy()
+        df_risk_show['peso'] = df_risk_show['peso'].map(lambda x: f"{x:.1%}")
+        df_risk_show['contrib_riesgo'] = df_risk_show['contrib_riesgo'].map(lambda x: f"{x:.1%}")
+        df_risk_show['diff'] = df_risk['diff'].map(lambda x: f"{x:+.1%}")
+
+        st.dataframe(
+            df_risk_show.rename(columns={
+                'peso': 'Peso actual',
+                'contrib_riesgo': 'Contribución al riesgo',
+                'diff': 'Diferencia'
+            }),
+            use_container_width=True
+        )
 
 # ---------------------------------------------------------------
 # PESTAÑAS PRINCIPALES
@@ -1197,3 +1426,5 @@ with tab4:
     plot_structural_diversification(df_portfolio_ticker)
     st.divider()
     plot_markowitz_analysis(df_portfolio_ticker, all_stocks)
+    st.divider()
+    plot_risk_contribution(df_portfolio_ticker, all_stocks)
