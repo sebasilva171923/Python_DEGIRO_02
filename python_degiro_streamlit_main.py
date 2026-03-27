@@ -1404,6 +1404,183 @@ def plot_risk_contribution(df_portfolio_ticker, all_stocks):
             use_container_width=True
         )
 
+# MAXIMO DRAWDOWN Y RECUPERACION --------------------------------
+
+def plot_drawdown_analysis(portfolio):
+    st.subheader("📉 Drawdown Histórico")
+
+    df = portfolio.copy()
+    df['date'] = pd.to_datetime(df['date'])
+    df = df.sort_values('date').copy()
+
+    # Serie base: valor de la cartera
+    df = df[['date', 'acc_price']].dropna().copy()
+
+    if df.empty or len(df) < 2:
+        st.info("No hay suficientes datos para calcular el drawdown histórico.")
+        return
+
+    # -----------------------------------------------------------
+    # 1) CÁLCULO DE DRAWDOWN
+    # -----------------------------------------------------------
+    df['rolling_max'] = df['acc_price'].cummax()
+    df['drawdown'] = df['acc_price'] / df['rolling_max'] - 1
+
+    max_dd = df['drawdown'].min()
+    trough_idx = df['drawdown'].idxmin()
+    trough_date = df.loc[trough_idx, 'date']
+
+    # Pico previo al máximo drawdown
+    df_until_trough = df[df['date'] <= trough_date].copy()
+    peak_value = df_until_trough['rolling_max'].max()
+
+    peak_candidates = df_until_trough[df_until_trough['acc_price'] == peak_value]
+    if not peak_candidates.empty:
+        peak_date = peak_candidates.iloc[0]['date']
+    else:
+        peak_date = pd.NaT
+
+    # Recuperación: primera fecha posterior al trough en que vuelve al máximo anterior
+    recovery_candidates = df[
+        (df['date'] > trough_date) &
+        (df['acc_price'] >= peak_value)
+    ]
+
+    if not recovery_candidates.empty:
+        recovery_date = recovery_candidates.iloc[0]['date']
+        recovery_days = (recovery_date - peak_date).days if pd.notna(peak_date) else np.nan
+        recovered_text = recovery_date.strftime('%d/%m/%Y')
+    else:
+        recovery_date = pd.NaT
+        recovery_days = np.nan
+        recovered_text = "No recuperado"
+
+    # Drawdown actual
+    current_dd = df.iloc[-1]['drawdown']
+
+    # -----------------------------------------------------------
+    # 2) KPIs
+    # -----------------------------------------------------------
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Max Drawdown", f"{max_dd:.1%}")
+    col2.metric("Drawdown actual", f"{current_dd:.1%}")
+    col3.metric("Fecha mínimo", trough_date.strftime('%d/%m/%Y'))
+    col4.metric("Recuperación", f"{int(recovery_days)} días" if pd.notna(recovery_days) else "Pendiente")
+
+    # Diagnóstico
+    if max_dd <= -0.30:
+        diag_text = "La cartera ha sufrido caídas históricas severas."
+        diag_color = "#D62728"
+    elif max_dd <= -0.15:
+        diag_text = "La cartera ha sufrido correcciones relevantes, pero no extremas."
+        diag_color = "#FFB000"
+    else:
+        diag_text = "La cartera ha mostrado un perfil de caídas relativamente contenido."
+        diag_color = "#00AA55"
+
+    st.markdown(
+        f"""
+        <div style='background-color:rgba(245,245,245,0.9);
+                    padding:10px 14px;
+                    border-radius:8px;
+                    border:1px solid rgba(180,180,180,0.8);
+                    margin-top:8px;
+                    margin-bottom:14px;'>
+            <span style='font-weight:700; color:#333;'>Diagnóstico:</span>
+            <span style='font-weight:700; color:{diag_color}; margin-left:8px;'>{diag_text}</span>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # -----------------------------------------------------------
+    # 3) GRÁFICO DE DRAWDOWN
+    # -----------------------------------------------------------
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=df['date'],
+        y=df['drawdown'],
+        mode='lines',
+        name='Drawdown',
+        fill='tozeroy',
+        line=dict(color=COLOR_SECUNDARIO, width=2),
+        hovertemplate='<b>%{x|%d %b %Y}</b><br>Drawdown: %{y:.2%}<extra></extra>'
+    ))
+
+    # Punto de máximo drawdown
+    fig.add_trace(go.Scatter(
+        x=[trough_date],
+        y=[max_dd],
+        mode='markers',
+        name='Máximo drawdown',
+        marker=dict(
+            size=12,
+            color='red',
+            line=dict(color='white', width=1.2)
+        ),
+        hovertemplate='<b>Máximo drawdown</b><br>%{x|%d %b %Y}<br>%{y:.2%}<extra></extra>'
+    ))
+
+    fig.update_layout(
+        title=dict(
+            text="Evolución del Drawdown de la Cartera",
+            x=0.5,
+            xanchor='center',
+            font=dict(size=18)
+        ),
+        xaxis=dict(
+            title="Fecha",
+            tickangle=-45
+        ),
+        yaxis=dict(
+            title="Drawdown",
+            tickformat=".0%",
+            gridcolor='rgba(200,200,200,0.3)'
+        ),
+        legend=dict(
+            orientation='h',
+            yanchor='bottom',
+            y=1.02,
+            xanchor='center',
+            x=0.5
+        ),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        hoverlabel=dict(bgcolor=HOVER_BG, font=HOVER_FONT),
+        margin=dict(t=80, b=60, l=60, r=60),
+        shapes=[dict(
+            type="rect",
+            xref="paper",
+            yref="paper",
+            x0=0, y0=0, x1=1, y1=1,
+            line=dict(color=COLOR_BORDE, width=1)
+        )]
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # -----------------------------------------------------------
+    # 4) TABLA RESUMEN
+    # -----------------------------------------------------------
+    with st.expander("Ver detalle del episodio de máximo drawdown"):
+        summary_df = pd.DataFrame({
+            'Concepto': [
+                'Pico previo',
+                'Mínimo del drawdown',
+                'Recuperación',
+                'Máximo drawdown'
+            ],
+            'Valor': [
+                peak_date.strftime('%d/%m/%Y') if pd.notna(peak_date) else 'N/A',
+                trough_date.strftime('%d/%m/%Y'),
+                recovered_text,
+                f"{max_dd:.1%}"
+            ]
+        })
+
+        st.dataframe(summary_df, use_container_width=True)
+
 # ---------------------------------------------------------------
 # PESTAÑAS PRINCIPALES
 # ---------------------------------------------------------------
@@ -1428,3 +1605,5 @@ with tab4:
     plot_markowitz_analysis(df_portfolio_ticker, all_stocks)
     st.divider()
     plot_risk_contribution(df_portfolio_ticker, all_stocks)
+    st.divider()
+    plot_drawdown_analysis(portfolio)
