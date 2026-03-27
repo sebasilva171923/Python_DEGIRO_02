@@ -1162,8 +1162,12 @@ def plot_markowitz_analysis(df_portfolio_ticker, all_stocks, n_portfolios=3000, 
     }).sort_values('peso_max_sharpe', ascending=False)
 
     with st.expander("Ver comparación de pesos: actual vs máximo Sharpe"):
+        df_opt_show = df_opt.copy()
+        df_opt_show['peso_actual'] = df_opt_show['peso_actual'].map(lambda x: f"{x:.1%}")
+        df_opt_show['peso_max_sharpe'] = df_opt_show['peso_max_sharpe'].map(lambda x: f"{x:.1%}")
+
         st.dataframe(
-            df_opt.rename(columns={
+            df_opt_show.rename(columns={
                 'peso_actual': 'Peso actual',
                 'peso_max_sharpe': 'Peso máximo Sharpe'
             }),
