@@ -163,15 +163,19 @@ def plot_semester_snapshots(portfolio):
     # -----------------------------------------------------------
     df = portfolio.copy()
     df['date'] = pd.to_datetime(df['date'])
-    df = df.sort_values('date')
+    df = df.sort_values('date').copy()
 
-    # acumulado real de depósitos
+    # Acumulado real de depósitos hasta cada fecha
     df['depositos_acum'] = df['depositos'].fillna(0).cumsum()
 
-    # --- Fecha máxima disponible ---
+    # Fecha máxima disponible
     max_date = df['date'].max()
 
-    # --- Crear fechas de foto
+    # -----------------------------------------------------------
+    # 2) CREAR FECHAS FOTO
+    #    Primera: 31/12/2021
+    #    Luego: 30/06 y 31/12 de cada año
+    # -----------------------------------------------------------
     snapshots = [pd.Timestamp("2021-12-31")]
 
     for year in range(2022, max_date.year + 1):
@@ -183,7 +187,7 @@ def plot_semester_snapshots(portfolio):
     df_snap = pd.DataFrame({'snapshot_date': snapshots}).sort_values('snapshot_date')
 
     # -----------------------------------------------------------
-    # 2) OBTENER EL ÚLTIMO REGISTRO DISPONIBLE <= FOTO
+    # 3) PARA CADA FOTO, TOMAR EL ÚLTIMO REGISTRO DISPONIBLE <= FECHA
     # -----------------------------------------------------------
     df_base = df[['date', 'depositos_acum', 'posiciones']].copy()
 
@@ -196,18 +200,158 @@ def plot_semester_snapshots(portfolio):
     )
 
     # -----------------------------------------------------------
-    # 3) CÁLCULOS
+    # 4) CÁLCULOS PRINCIPALES
     # -----------------------------------------------------------
     df_snap['saldo_cuenta'] = df_snap['posiciones']
     df_snap['neto'] = df_snap['saldo_cuenta'] - df_snap['depositos_acum']
 
-    # % vs foto anterior
+    # Variación % vs foto anterior
     df_snap['pct_dep'] = df_snap['depositos_acum'].pct_change() * 100
     df_snap['pct_saldo'] = df_snap['saldo_cuenta'].pct_change() * 100
     df_snap['pct_neto'] = df_snap['neto'].pct_change() * 100
 
     # Etiquetas eje X
     df_snap['label'] = df_snap['snapshot_date'].dt.strftime('%d/%m/%Y')
+
+    # -----------------------------------------------------------
+    # 5) CREAR GRÁFICO
+    # -----------------------------------------------------------
+    fig = go.Figure()
+
+    fig.add_trace(go.Bar(
+        x=df_snap['label'],
+        y=df_snap['depositos_acum'],
+        name='Depósitos acumulados',
+        marker=dict(
+            color=COLOR_PRINCIPAL,
+            line=dict(color=COLOR_PRINCIPAL, width=1.2)
+        ),
+        hovertemplate='<b>%{x}</b><br>Depósitos acumulados: %{y:,.2f} €<extra></extra>'
+    ))
+
+    fig.add_trace(go.Bar(
+        x=df_snap['label'],
+        y=df_snap['saldo_cuenta'],
+        name='Saldo cuenta',
+        marker=dict(
+            color=COLOR_AUX1,
+            line=dict(color=COLOR_AUX1, width=1.2)
+        ),
+        hovertemplate='<b>%{x}</b><br>Saldo cuenta: %{y:,.2f} €<extra></extra>'
+    ))
+
+    fig.add_trace(go.Bar(
+        x=df_snap['label'],
+        y=df_snap['neto'],
+        name='Neto',
+        marker=dict(
+            color=COLOR_SECUNDARIO,
+            line=dict(color=COLOR_SECUNDARIO, width=1.2)
+        ),
+        hovertemplate='<b>%{x}</b><br>Neto: %{y:,.2f} €<extra></extra>'
+    ))
+
+    # -----------------------------------------------------------
+    # 6) ANOTACIONES / TARJETAS
+    # -----------------------------------------------------------
+    annotations = []
+
+    # xshift para colocar cada tarjeta sobre su barra correspondiente
+    series_info = [
+        ('depositos_acum', 'pct_dep', -55),
+        ('saldo_cuenta', 'pct_saldo', 0),
+        ('neto', 'pct_neto', 55),
+    ]
+
+    for val_col, pct_col, xshift in series_info:
+        for _, row in df_snap.iterrows():
+            x = row['label']
+            y = row[val_col]
+            pct = row[pct_col]
+
+            if pd.isna(y):
+                continue
+
+            # Tarjeta superior: valor absoluto
+            annotations.append(dict(
+                x=x,
+                y=y,
+                xshift=xshift,
+                yshift=62,
+                text=f"<b>{y:,.2f} €</b>",
+                showarrow=False,
+                font=dict(size=11, color="black"),
+                align="center",
+                bgcolor="rgba(245,245,245,0.95)",
+                bordercolor="rgba(180,180,180,0.9)",
+                borderwidth=1,
+                borderpad=4
+            ))
+
+            # Tarjeta inferior: variación %
+            if pd.notna(pct):
+                pct_color = "#00AA55" if pct >= 0 else "#D62728"
+                pct_text = f"<b>{pct:+.1f}%</b>"
+            else:
+                pct_color = "gray"
+                pct_text = "<b>—</b>"
+
+            annotations.append(dict(
+                x=x,
+                y=y,
+                xshift=xshift,
+                yshift=24,
+                text=pct_text,
+                showarrow=False,
+                font=dict(size=10, color=pct_color),
+                align="center",
+                bgcolor="rgba(245,245,245,0.95)",
+                bordercolor="rgba(180,180,180,0.9)",
+                borderwidth=1,
+                borderpad=3
+            ))
+
+    # -----------------------------------------------------------
+    # 7) LAYOUT
+    # -----------------------------------------------------------
+    fig.update_layout(
+        title=dict(
+            text="Fotos Semestrales: Depósitos, Saldo y Neto",
+            x=0.5,
+            xanchor='center',
+            font=dict(size=18)
+        ),
+        xaxis=dict(
+            title="Fecha foto",
+            tickangle=-45
+        ),
+        yaxis=dict(
+            title="Importe (€)",
+            gridcolor='rgba(200,200,200,0.3)'
+        ),
+        barmode='group',
+        annotations=annotations,
+        legend=dict(
+            orientation='h',
+            yanchor='bottom',
+            y=1.02,
+            xanchor='center',
+            x=0.5
+        ),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        hoverlabel=dict(bgcolor=HOVER_BG, font=HOVER_FONT),
+        margin=dict(t=130, b=90, l=60, r=40),
+        shapes=[dict(
+            type="rect",
+            xref="paper",
+            yref="paper",
+            x0=0, y0=0, x1=1, y1=1,
+            line=dict(color=COLOR_BORDE, width=1)
+        )]
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def plot_dividends_by_company(df_degiro):
