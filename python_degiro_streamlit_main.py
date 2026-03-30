@@ -359,6 +359,141 @@ def plot_semester_snapshots(portfolio):
 
     st.plotly_chart(fig, use_container_width=True)
 
+def plot_annual_returns_table(portfolio):
+    st.subheader("📅 Rentabilidad Anual de la Cartera")
+
+    df = portfolio.copy()
+    df['date'] = pd.to_datetime(df['date'])
+    df = df.sort_values('date').copy()
+
+    # -----------------------------------------------------------
+    # 1) ELEGIR LA SERIE DE VALOR DE CARTERA
+    # -----------------------------------------------------------
+    # Usamos "posiciones" como valor real de la cuenta/inversión
+    if 'posiciones' not in df.columns:
+        st.info("No existe la columna 'posiciones' en portfolio para calcular rentabilidades.")
+        return
+
+    df = df[['date', 'posiciones', 'depositos']].copy()
+    df['depositos'] = df['depositos'].fillna(0)
+
+    # Evitar divisiones por cero o valores inválidos
+    df = df[df['posiciones'].notna()].copy()
+
+    if len(df) < 2:
+        st.info("No hay suficientes datos para calcular la rentabilidad anual.")
+        return
+
+    # -----------------------------------------------------------
+    # 2) RENTABILIDAD DIARIA AJUSTADA POR FLUJOS (TWR simplificado)
+    # -----------------------------------------------------------
+    df['valor_prev'] = df['posiciones'].shift(1)
+
+    df['daily_return'] = np.where(
+        (df['valor_prev'].notna()) & (df['valor_prev'] != 0),
+        (df['posiciones'] - df['valor_prev'] - df['depositos']) / df['valor_prev'],
+        np.nan
+    )
+
+    # Primer año disponible
+    df['year'] = df['date'].dt.year
+
+    # -----------------------------------------------------------
+    # 3) RENTABILIDAD POR AÑO NATURAL
+    # -----------------------------------------------------------
+    annual_rows = []
+
+    for year, g in df.groupby('year'):
+        g = g.sort_values('date').copy()
+
+        valid_returns = g['daily_return'].dropna()
+
+        if len(valid_returns) == 0:
+            annual_return = np.nan
+        else:
+            annual_return = (1 + valid_returns).prod() - 1
+
+        valor_inicio = g.iloc[0]['posiciones']
+        valor_fin = g.iloc[-1]['posiciones']
+        depositos_ano = g['depositos'].sum()
+
+        annual_rows.append({
+            'Año': year,
+            'Valor inicio (€)': valor_inicio,
+            'Valor fin (€)': valor_fin,
+            'Depósitos año (€)': depositos_ano,
+            'Rentabilidad anual': annual_return
+        })
+
+    df_annual = pd.DataFrame(annual_rows)
+
+    # -----------------------------------------------------------
+    # 4) RENTABILIDAD ANUALIZADA DESDE INICIO
+    # -----------------------------------------------------------
+    all_valid_returns = df['daily_return'].dropna()
+
+    if len(all_valid_returns) > 0:
+        total_return = (1 + all_valid_returns).prod() - 1
+
+        start_date = df.loc[df['daily_return'].notna(), 'date'].min()
+        end_date = df['date'].max()
+
+        years_elapsed = (end_date - start_date).days / 365.25
+
+        if years_elapsed > 0 and (1 + total_return) > 0:
+            annualized_return = (1 + total_return) ** (1 / years_elapsed) - 1
+        else:
+            annualized_return = np.nan
+    else:
+        annualized_return = np.nan
+
+    # -----------------------------------------------------------
+    # 5) KPI SUPERIOR
+    # -----------------------------------------------------------
+    col1, col2 = st.columns(2)
+
+    col1.metric(
+        "Rentabilidad anualizada",
+        f"{annualized_return:.2%}" if pd.notna(annualized_return) else "N/A"
+    )
+
+    if not df_annual.empty and df_annual['Rentabilidad anual'].notna().any():
+        best_year_row = df_annual.loc[df_annual['Rentabilidad anual'].idxmax()]
+        best_year_text = f"{int(best_year_row['Año'])} ({best_year_row['Rentabilidad anual']:.2%})"
+    else:
+        best_year_text = "N/A"
+
+    col2.metric("Mejor año", best_year_text)
+
+    # -----------------------------------------------------------
+    # 6) TABLA FORMATEADA
+    # -----------------------------------------------------------
+    df_show = df_annual.copy()
+
+    df_show['Valor inicio (€)'] = df_show['Valor inicio (€)'].map(lambda x: f"{x:,.2f} €")
+    df_show['Valor fin (€)'] = df_show['Valor fin (€)'].map(lambda x: f"{x:,.2f} €")
+    df_show['Depósitos año (€)'] = df_show['Depósitos año (€)'].map(lambda x: f"{x:,.2f} €")
+    df_show['Rentabilidad anual'] = df_show['Rentabilidad anual'].map(
+        lambda x: f"{x:.2%}" if pd.notna(x) else "N/A"
+    )
+
+    st.dataframe(df_show, use_container_width=True)
+
+    # -----------------------------------------------------------
+    # 7) ACLARACIÓN METODOLÓGICA
+    # -----------------------------------------------------------
+    with st.expander("Ver metodología del cálculo"):
+        st.markdown(
+            """
+            **Cómo se calcula esta rentabilidad:**
+
+            - Se usa la columna **`posiciones`** como valor de la cartera.
+            - Se ajusta por los **depósitos** para no confundir aportaciones de capital con rendimiento.
+            - La rentabilidad anual se calcula encadenando las rentabilidades diarias ajustadas por flujos.
+            - La **rentabilidad anualizada** es la tasa compuesta anual desde el inicio hasta la fecha más reciente.
+            """
+        )
+
 # -------------------------------------------------------------------------------------------------------------------------- #
 
 # ------------------------------------------------------- PESTAÑA 02 ------------------------------------------------------- #
@@ -1876,12 +2011,18 @@ tab1, tab2, tab3, tab4 = st.tabs(["📈 Evolución Portafolio", "💶 Análisis 
 
 with tab1:
     plot_portfolio_trend(portfolio)
+    st.divider()
     plot_portfolio_data(portfolio, all_stocks)
+    st.divider()
     plot_semester_snapshots(portfolio)
+    st.divider()
+    plot_annual_returns_table(portfolio)
 
 with tab2:
     plot_dividends_by_company(df_degiro)
+    st.divider()
     plot_dividends_evolution(df_degiro)
+    st.divider()
     plot_dividends_yearly_growth(df_degiro)
 
 with tab3:
