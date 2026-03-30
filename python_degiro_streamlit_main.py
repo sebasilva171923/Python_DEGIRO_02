@@ -946,8 +946,12 @@ def plot_projection_assumptions_table(portfolio, df_degiro):
     avg_dep_monthly_hist = np.mean(dep_hist) if len(dep_hist) > 0 else np.nan
     avg_div_monthly_hist = np.mean(div_hist) if len(div_hist) > 0 else np.nan
 
+    # XIRR total real de la cartera
+    total_xirr = calculate_portfolio_xirr(portfolio, df_degiro)
+
     return {
         "return": historical_return,
+        "xirr_total": total_xirr,
         "div_yield": historical_div_yield,
         "avg_dep_monthly_hist": avg_dep_monthly_hist,
         "avg_div_monthly_hist": avg_div_monthly_hist
@@ -1030,29 +1034,17 @@ def plot_100k_projection(portfolio, df_degiro, assumptions=None, target_value=10
     if pd.isna(div_yield):
         div_yield = 0.02
 
-    # CAGR real de la cartera usando fotos anuales
-    # Si hay al menos 3 años, excluimos el primero por si fue parcial
-    if len(annual_hist) >= 3:
-        annual_hist_for_growth = annual_hist.iloc[1:].copy()
-    else:
-        annual_hist_for_growth = annual_hist.copy()
+    # XIRR total real de la cartera como tasa base de crecimiento
+    growth_rate = assumptions.get("xirr_total", np.nan)
 
-    first_valid = annual_hist_for_growth.iloc[0]
-    last_valid = annual_hist_for_growth.iloc[-1]
-
-    start_value = first_valid['posiciones']
-    end_value = last_valid['posiciones']
-    n_years = max(len(annual_hist_for_growth) - 1, 1)
-
-    if start_value > 0 and end_value > 0:
-        growth_rate = (end_value / start_value) ** (1 / n_years) - 1
-    else:
+    if pd.isna(growth_rate):
         growth_rate = 0.07
 
     # -----------------------------------------------------------
     # 4.b) FLUJOS USADOS EN LA PROYECCIÓN
     #     Usamos los promedios históricos ya calculados arriba
     # -----------------------------------------------------------
+
     monthly_deposit = assumptions.get("avg_dep_monthly_hist", np.nan)
     monthly_dividend = assumptions.get("avg_div_monthly_hist", np.nan)
 
@@ -1142,14 +1134,16 @@ def plot_100k_projection(portfolio, df_degiro, assumptions=None, target_value=10
 
     st.markdown(
         f"""
-        <div style='background-color:rgba(245,245,245,0.9);
+        <div style='background-color:rgba(245,245,245,0.7);
                     padding:10px 14px;
                     border-radius:8px;
                     border:1px solid rgba(180,180,180,0.8);
                     margin-top:8px;
                     margin-bottom:14px;'>
-            <span style='font-weight:700; color:#333;'>Diagnóstico:</span>
-            <span style='font-weight:700; color:{diag_color}; margin-left:8px;'>{diag_text}</span>
+            <b>Supuestos usados en la proyección:</b><br>
+            XIRR total: <b>{growth_rate:.2%}</b> &nbsp; | &nbsp;
+            Yield dividendos: <b>{div_yield:.2%}</b> &nbsp; | &nbsp;
+            Aporte mensual medio: <b>{monthly_contribution:,.0f} €</b>
         </div>
         """,
         unsafe_allow_html=True
