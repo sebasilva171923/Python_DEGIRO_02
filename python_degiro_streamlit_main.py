@@ -616,8 +616,53 @@ def plot_income_evolution_table(portfolio, df_degiro):
     df['total_anual'] = df['depositos_anuales'] + df['dividendos_anuales']
 
     # -----------------------------------------------------------
+    # 6) FILA RESUMEN PROMEDIO
+    # -----------------------------------------------------------
+    avg_dep_anual = df['depositos_anuales'].mean()
+    avg_div_anual = df['dividendos_anuales'].mean()
+    avg_dep_mensual = df['dep_mensual'].mean()
+    avg_div_mensual = df['div_mensual'].mean()
+    avg_ingreso_mensual_total = df['ingreso_mensual_total'].mean()
+    avg_total_anual = df['total_anual'].mean()
+
+    st.markdown("#### Promedio del período")
+
+    st.markdown(
+        f"""
+        <div style="overflow-x:auto; margin-bottom:16px;">
+            <table style="width:100%; border-collapse:collapse; font-size:0.95rem;">
+                <thead>
+                    <tr>
+                        <th style="background-color:#DCEBFF; padding:10px; border:1px solid #C8D8F0;">Depósitos (€)</th>
+                        <th style="background-color:#DCEBFF; padding:10px; border:1px solid #C8D8F0;">Dividendos (€)</th>
+                        <th style="background-color:#DCEBFF; padding:10px; border:1px solid #C8D8F0;">Depósitos mensuales</th>
+                        <th style="background-color:#DCEBFF; padding:10px; border:1px solid #C8D8F0;">Dividendos mensuales</th>
+                        <th style="background-color:#DCEBFF; padding:10px; border:1px solid #C8D8F0;">Ingreso mensual total</th>
+                        <th style="background-color:#DCEBFF; padding:10px; border:1px solid #C8D8F0;">Total anual</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td style="background-color:#F7FAFF; padding:10px; border:1px solid #D9E2F0; text-align:center;"><b>{avg_dep_anual:,.0f} €</b></td>
+                        <td style="background-color:#F7FAFF; padding:10px; border:1px solid #D9E2F0; text-align:center;"><b>{avg_div_anual:,.0f} €</b></td>
+                        <td style="background-color:#F7FAFF; padding:10px; border:1px solid #D9E2F0; text-align:center;"><b>{avg_dep_mensual:,.0f} €</b></td>
+                        <td style="background-color:#F7FAFF; padding:10px; border:1px solid #D9E2F0; text-align:center;"><b>{avg_div_mensual:,.0f} €</b></td>
+                        <td style="background-color:#F7FAFF; padding:10px; border:1px solid #D9E2F0; text-align:center;"><b>{avg_ingreso_mensual_total:,.0f} €</b></td>
+                        <td style="background-color:#F7FAFF; padding:10px; border:1px solid #D9E2F0; text-align:center;"><b>{avg_total_anual:,.0f} €</b></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # -----------------------------------------------------------
     # 6) KPIs ARRIBA
     # -----------------------------------------------------------
+
+    st.markdown("#### Detalle por año")
+    
     last_row = df.iloc[-1]
 
     col1, col2, col3 = st.columns(3)
