@@ -758,14 +758,18 @@ def plot_income_evolution_table(portfolio, df_degiro):
     # -----------------------------------------------------------
     df_show = df.copy()
 
-    df_show['depositos_anuales'] = df_show['depositos_anuales'].map(lambda x: f"{x:,.0f} €")
-    df_show['dividendos_anuales'] = df_show['dividendos_anuales'].map(lambda x: f"{x:,.0f} €")
+    # Año como texto para evitar formatos raros
+    df_show['year'] = df_show['year'].astype(str)
 
-    df_show['dep_mensual'] = df_show['dep_mensual'].map(lambda x: f"{x:,.0f} €")
-    df_show['div_mensual'] = df_show['div_mensual'].map(lambda x: f"{x:,.0f} €")
-    df_show['ingreso_mensual_total'] = df_show['ingreso_mensual_total'].map(lambda x: f"{x:,.0f} €")
+    # Formato con 1 decimal
+    df_show['depositos_anuales'] = df_show['depositos_anuales'].map(lambda x: f"{x:,.1f} €")
+    df_show['dividendos_anuales'] = df_show['dividendos_anuales'].map(lambda x: f"{x:,.1f} €")
 
-    df_show['total_anual'] = df_show['total_anual'].map(lambda x: f"{x:,.0f} €")
+    df_show['dep_mensual'] = df_show['dep_mensual'].map(lambda x: f"{x:,.1f} €")
+    df_show['div_mensual'] = df_show['div_mensual'].map(lambda x: f"{x:,.1f} €")
+    df_show['ingreso_mensual_total'] = df_show['ingreso_mensual_total'].map(lambda x: f"{x:,.1f} €")
+
+    df_show['total_anual'] = df_show['total_anual'].map(lambda x: f"{x:,.1f} €")
 
     df_show = df_show.rename(columns={
         'year': 'Año',
@@ -777,7 +781,7 @@ def plot_income_evolution_table(portfolio, df_degiro):
         'total_anual': 'Total anual'
     })
 
-    st.dataframe(df_show, use_container_width=True)
+    st.dataframe(df_show, use_container_width=True, hide_index=True)
 
     # -----------------------------------------------------------
     # 8) INSIGHT (muy útil)
@@ -1263,13 +1267,16 @@ def plot_100k_projection(portfolio, df_degiro, assumptions=None, target_value=10
     # -----------------------------------------------------------
     with st.expander("Ver detalle de la proyección"):
         show_df = plot_df.copy()
+        # Año como texto para evitar formatos raros
+        show_df['year'] = show_df['year'].astype(str)
+
         show_df['Tipo'] = np.where(show_df['projected'], 'Proyección', 'Histórico')
         show_df['Valor cartera'] = show_df['posiciones'].map(lambda x: f"{x:,.0f} €")
         show_df['Acum. dep. + div.'] = show_df['acc_dep_div'].map(lambda x: f"{x:,.0f} €")
 
         st.dataframe(
             show_df[['year', 'Tipo', 'Valor cartera', 'Acum. dep. + div.']].rename(columns={'year': 'Año'}),
-            use_container_width=True
+            use_container_width=True, hide_index=True
         )
 
 def calculate_portfolio_xirr(portfolio, df_degiro):
