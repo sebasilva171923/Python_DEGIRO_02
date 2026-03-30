@@ -569,6 +569,119 @@ def plot_annual_returns_table(portfolio, all_stocks, benchmark_ticker="VUSA.MI")
             """
         )
 
+def plot_income_evolution_table(portfolio, df_degiro):
+    st.subheader("💸 Evolución de Ingresos (Depósitos + Dividendos)")
+
+    # -----------------------------------------------------------
+    # 1) PREPARAR DEPÓSITOS
+    # -----------------------------------------------------------
+    df_port = portfolio.copy()
+    df_port['date'] = pd.to_datetime(df_port['date'])
+    df_port['year'] = df_port['date'].dt.year
+
+    df_dep = df_port.groupby('year', as_index=False)['depositos'].sum()
+    df_dep.rename(columns={'depositos': 'depositos_anuales'}, inplace=True)
+
+    # -----------------------------------------------------------
+    # 2) PREPARAR DIVIDENDOS
+    # -----------------------------------------------------------
+    df_div = df_degiro.copy()
+    df_div = df_div[df_div['tipo_movimiento'] == 'DIVIDENDO'].copy()
+    df_div['date'] = pd.to_datetime(df_div['date'])
+    df_div['year'] = df_div['date'].dt.year
+
+    df_div = df_div.groupby('year', as_index=False)['importe_EUR'].sum()
+    df_div.rename(columns={'importe_EUR': 'dividendos_anuales'}, inplace=True)
+
+    # -----------------------------------------------------------
+    # 3) MERGE
+    # -----------------------------------------------------------
+    df = pd.merge(df_dep, df_div, on='year', how='outer').fillna(0)
+    df = df.sort_values('year')
+
+    # -----------------------------------------------------------
+    # 4) SOLO AÑOS CERRADOS
+    # -----------------------------------------------------------
+    current_year = datetime.now().year
+    df = df[df['year'] < current_year]
+
+    if df.empty:
+        st.info("No hay años cerrados suficientes para mostrar ingresos.")
+        return
+
+    # -----------------------------------------------------------
+    # 5) CÁLCULOS
+    # -----------------------------------------------------------
+    df['dep_mensual'] = df['depositos_anuales'] / 12
+    df['div_mensual'] = df['dividendos_anuales'] / 12
+    df['ingreso_mensual_total'] = df['dep_mensual'] + df['div_mensual']
+
+    df['total_anual'] = df['depositos_anuales'] + df['dividendos_anuales']
+
+    # -----------------------------------------------------------
+    # 6) KPIs ARRIBA
+    # -----------------------------------------------------------
+    last_row = df.iloc[-1]
+
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric(
+        "Ingreso mensual actual",
+        f"{last_row['ingreso_mensual_total']:,.0f} €"
+    )
+
+    col2.metric(
+        "Dividendos mensuales",
+        f"{last_row['div_mensual']:,.0f} €"
+    )
+
+    col3.metric(
+        "Aporte mensual",
+        f"{last_row['dep_mensual']:,.0f} €"
+    )
+
+    # -----------------------------------------------------------
+    # 7) TABLA
+    # -----------------------------------------------------------
+    df_show = df.copy()
+
+    df_show['depositos_anuales'] = df_show['depositos_anuales'].map(lambda x: f"{x:,.0f} €")
+    df_show['dividendos_anuales'] = df_show['dividendos_anuales'].map(lambda x: f"{x:,.0f} €")
+
+    df_show['dep_mensual'] = df_show['dep_mensual'].map(lambda x: f"{x:,.0f} €")
+    df_show['div_mensual'] = df_show['div_mensual'].map(lambda x: f"{x:,.0f} €")
+    df_show['ingreso_mensual_total'] = df_show['ingreso_mensual_total'].map(lambda x: f"{x:,.0f} €")
+
+    df_show['total_anual'] = df_show['total_anual'].map(lambda x: f"{x:,.0f} €")
+
+    df_show = df_show.rename(columns={
+        'year': 'Año',
+        'depositos_anuales': 'Depósitos (€)',
+        'dividendos_anuales': 'Dividendos (€)',
+        'dep_mensual': 'Depósitos mensuales',
+        'div_mensual': 'Dividendos mensuales',
+        'ingreso_mensual_total': 'Ingreso mensual total',
+        'total_anual': 'Total anual'
+    })
+
+    st.dataframe(df_show, use_container_width=True)
+
+    # -----------------------------------------------------------
+    # 8) INSIGHT (muy útil)
+    # -----------------------------------------------------------
+    with st.expander("Ver interpretación"):
+        st.markdown("""
+        - **Depósitos mensuales**: tu esfuerzo de ahorro.
+        - **Dividendos mensuales**: tu ingreso pasivo real.
+        - **Ingreso mensual total**: cuánto capital estás añadiendo cada mes.
+        
+        👉 El objetivo a largo plazo es que:
+        - los dividendos vayan reemplazando a los depósitos.
+        
+        👉 Cuando los dividendos ≈ depósitos:
+        - tu cartera empieza a autoalimentarse.
+        """)
+
 # -------------------------------------------------------------------------------------------------------------------------- #
 
 # ------------------------------------------------------- PESTAÑA 02 ------------------------------------------------------- #
@@ -2092,6 +2205,8 @@ with tab1:
     plot_semester_snapshots(portfolio)
     st.divider()
     plot_annual_returns_table(portfolio, all_stocks)
+    st.divider()
+    plot_income_evolution_table(portfolio, df_degiro)
 
 with tab2:
     plot_dividends_by_company(df_degiro)
