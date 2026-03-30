@@ -1207,6 +1207,85 @@ def plot_100k_projection(portfolio, df_degiro, assumptions=None, target_value=10
             use_container_width=True
         )
 
+def calculate_portfolio_xirr(portfolio, df_degiro):
+    df = portfolio.copy()
+    df['date'] = pd.to_datetime(df['date'])
+
+    # --- depósitos ---
+    df_dep = df[['date', 'depositos']].copy()
+    df_dep = df_dep[df_dep['depositos'] != 0]
+
+    df_dep['cashflow'] = -df_dep['depositos']  # inversión → negativo
+
+    # --- dividendos ---
+    df_div = df_degiro[df_degiro['tipo_movimiento'] == 'DIVIDENDO'].copy()
+
+    if not df_div.empty:
+        df_div['date'] = pd.to_datetime(df_div['date'])
+        df_div = df_div[['date', 'importe_EUR']].copy()
+        df_div.rename(columns={'importe_EUR': 'cashflow'}, inplace=True)
+    else:
+        df_div = pd.DataFrame(columns=['date', 'cashflow'])
+
+    # --- unir flujos ---
+    cashflows = pd.concat([
+        df_dep[['date', 'cashflow']],
+        df_div[['date', 'cashflow']]
+    ])
+
+    # --- valor actual de la cartera (última fecha) ---
+    last_row = df.sort_values('date').iloc[-1]
+    current_value = last_row['posiciones']
+    last_date = last_row['date']
+
+    cashflows = pd.concat([
+        cashflows,
+        pd.DataFrame([{
+            'date': last_date,
+            'cashflow': current_value
+        }])
+    ])
+
+    cashflows = cashflows.sort_values('date')
+
+    # -----------------------------------------------------------
+    # XIRR
+    # -----------------------------------------------------------
+    def xirr(cashflows):
+        dates = cashflows['date']
+        amounts = cashflows['cashflow']
+
+        def npv(rate):
+            return sum([
+                amt / ((1 + rate) ** ((date - dates.iloc[0]).days / 365))
+                for amt, date in zip(amounts, dates)
+            ])
+
+        # Newton method
+        rate = 0.1
+        for _ in range(100):
+            f = npv(rate)
+            df_rate = (npv(rate + 1e-6) - f) / 1e-6
+
+            if abs(df_rate) < 1e-10:
+                break
+
+            new_rate = rate - f / df_rate
+
+            if abs(new_rate - rate) < 1e-8:
+                return new_rate
+
+            rate = new_rate
+
+        return rate
+
+    try:
+        result = xirr(cashflows)
+    except:
+        result = np.nan
+
+    return result
+
 # -------------------------------------------------------------------------------------------------------------------------- #
 
 # ------------------------------------------------------- PESTAÑA 02 ------------------------------------------------------- #
@@ -2735,6 +2814,12 @@ with tab1:
     st.divider()
     assumptions = plot_projection_assumptions_table(portfolio, df_degiro)
     plot_100k_projection(portfolio, df_degiro, assumptions=assumptions)
+    xirr = calculate_portfolio_xirr(portfolio, df_degiro)
+
+    st.metric(
+        "Rentabilidad anual real (XIRR)",
+        f"{xirr:.2%}" if pd.notna(xirr) else "N/A"
+    )
     
 
 with tab2:
