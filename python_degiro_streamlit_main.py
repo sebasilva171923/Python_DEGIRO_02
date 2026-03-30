@@ -859,12 +859,31 @@ def plot_projection_assumptions_table(portfolio, df_degiro):
     )
 
     # Devolver valores por si luego quieres usarlos en la proyección
+
+    # -----------------------------------------------------------
+    # 6) PROMEDIOS HISTÓRICOS DE FLUJOS
+    # -----------------------------------------------------------
+
+    # Depósitos y dividendos medios mensuales usando años cerrados
+    dep_hist = []
+    div_hist = []
+
+    for year in years:
+        g = df[df['year'] == year].copy()
+        depositos_ano = g['depositos'].sum()
+        dividendos_ano = div.loc[div['year'] == year, 'importe_EUR'].sum() if not div.empty else 0.0
+
+        dep_hist.append(depositos_ano / 12)
+        div_hist.append(dividendos_ano / 12)
+
+    avg_dep_monthly_hist = np.mean(dep_hist) if len(dep_hist) > 0 else np.nan
+    avg_div_monthly_hist = np.mean(div_hist) if len(div_hist) > 0 else np.nan
+
     return {
-        "last_closed_year": last_closed_year,
-        "last_return": last_return,
-        "last_div_yield": last_div_yield,
-        "historical_return": historical_return,
-        "historical_div_yield": historical_div_yield
+        "return": historical_return,
+        "div_yield": historical_div_yield,
+        "avg_dep_monthly_hist": avg_dep_monthly_hist,
+        "avg_div_monthly_hist": avg_div_monthly_hist
     }
 
 def plot_100k_projection(portfolio, df_degiro, assumptions=None, target_value=100000):
@@ -950,18 +969,22 @@ def plot_100k_projection(portfolio, df_degiro, assumptions=None, target_value=10
     if pd.isna(div_yield):
         div_yield = 0.02
 
-    # Aporte mensual actual:
-    # usamos promedio de los últimos 12 meses reales
-    last_date = hist['date'].max()
-    start_12m = last_date - pd.Timedelta(days=365)
+    # -----------------------------------------------------------
+    # 4.b) FLUJOS USADOS EN LA PROYECCIÓN
+    #     Usamos los promedios históricos ya calculados arriba
+    # -----------------------------------------------------------
+    
+    monthly_deposit = assumptions.get("avg_dep_monthly_hist", np.nan)
+    monthly_dividend = assumptions.get("avg_div_monthly_hist", np.nan)
 
-    hist_12m = hist[hist['date'] >= start_12m].copy()
+    if pd.isna(monthly_deposit):
+        monthly_deposit = 0.0
 
-    depositos_12m = hist_12m['depositos'].sum()
-    dividendos_12m = hist_12m['dividendos'].sum()
+    if pd.isna(monthly_dividend):
+        monthly_dividend = 0.0
 
-    monthly_contribution = depositos_12m / 12
-    annual_deposit = monthly_contribution * 12
+    monthly_contribution = monthly_deposit + monthly_dividend
+    annual_deposit = monthly_deposit * 12
 
     # Los dividendos futuros los modelamos como yield sobre la cartera del año anterior
     # y se reinvierten automáticamente
