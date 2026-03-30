@@ -662,7 +662,7 @@ def plot_income_evolution_table(portfolio, df_degiro):
     # -----------------------------------------------------------
 
     st.markdown("#### Detalle por año")
-    
+
     last_row = df.iloc[-1]
 
     col1, col2, col3 = st.columns(3)
@@ -723,6 +723,452 @@ def plot_income_evolution_table(portfolio, df_degiro):
         👉 Cuando los dividendos ≈ depósitos:
         - tu cartera empieza a autoalimentarse.
         """)
+
+def plot_projection_assumptions_table(portfolio, df_degiro):
+    st.subheader("🧮 Supuestos Base para la Proyección")
+
+    # -----------------------------------------------------------
+    # 1) PREPARAR PORTFOLIO
+    # -----------------------------------------------------------
+    df = portfolio.copy()
+    df['date'] = pd.to_datetime(df['date'])
+    df = df.sort_values('date').copy()
+
+    if 'posiciones' not in df.columns or 'depositos' not in df.columns:
+        st.info("Faltan columnas 'posiciones' o 'depositos' en portfolio.")
+        return None
+
+    df = df[['date', 'posiciones', 'depositos']].copy()
+    df['depositos'] = df['depositos'].fillna(0)
+    df['year'] = df['date'].dt.year
+
+    # Último año cerrado
+    last_date = df['date'].max()
+    if last_date.month == 12 and last_date.day == 31:
+        last_closed_year = last_date.year
+    else:
+        last_closed_year = last_date.year - 1
+
+    df = df[df['year'] <= last_closed_year].copy()
+
+    if df.empty:
+        st.info("No hay años cerrados suficientes para calcular supuestos.")
+        return None
+
+    # -----------------------------------------------------------
+    # 2) PREPARAR DIVIDENDOS
+    # -----------------------------------------------------------
+    div = df_degiro.copy()
+    div = div[div['tipo_movimiento'] == 'DIVIDENDO'].copy()
+    div['date'] = pd.to_datetime(div['date'])
+    div['year'] = div['date'].dt.year
+    div = div[div['year'] <= last_closed_year].copy()
+
+    # -----------------------------------------------------------
+    # 3) CÁLCULOS ANUALES
+    # -----------------------------------------------------------
+    years = sorted(df['year'].dropna().unique().tolist())
+    rows = []
+
+    for year in years:
+        g = df[df['year'] == year].sort_values('date').copy()
+        if g.empty:
+            continue
+
+        valor_inicio = g.iloc[0]['posiciones']
+        valor_fin = g.iloc[-1]['posiciones']
+        depositos_ano = g['depositos'].sum()
+        valor_medio = g['posiciones'].mean()
+
+        if valor_inicio > 0:
+            rent_anual = (valor_fin - depositos_ano - valor_inicio) / valor_inicio
+        else:
+            rent_anual = np.nan
+
+        dividendos_ano = div.loc[div['year'] == year, 'importe_EUR'].sum() if not div.empty else 0.0
+
+        if valor_medio > 0:
+            div_yield = dividendos_ano / valor_medio
+        else:
+            div_yield = np.nan
+
+        rows.append({
+            'year': year,
+            'rentabilidad': rent_anual,
+            'div_yield': div_yield
+        })
+
+    df_metrics = pd.DataFrame(rows)
+
+    if df_metrics.empty:
+        st.info("No se pudieron calcular métricas anuales para la proyección.")
+        return None
+
+    # -----------------------------------------------------------
+    # 4) ÚLTIMO AÑO + HISTÓRICO
+    # -----------------------------------------------------------
+    last_row = df_metrics[df_metrics['year'] == last_closed_year].copy()
+
+    if last_row.empty:
+        st.info("No se pudo identificar el último año cerrado.")
+        return None
+
+    last_return = last_row.iloc[0]['rentabilidad']
+    last_div_yield = last_row.iloc[0]['div_yield']
+
+    valid_returns = df_metrics['rentabilidad'].dropna()
+    valid_yields = df_metrics['div_yield'].dropna()
+
+    if len(valid_returns) > 0 and ((1 + valid_returns) > 0).all():
+        historical_return = (1 + valid_returns).prod() ** (1 / len(valid_returns)) - 1
+    else:
+        historical_return = np.nan
+
+    historical_div_yield = valid_yields.mean() if len(valid_yields) > 0 else np.nan
+
+    # -----------------------------------------------------------
+    # 5) TABLA RESUMEN VISUAL
+    # -----------------------------------------------------------
+    st.markdown(
+        f"""
+        <div style="overflow-x:auto; margin-bottom:16px;">
+            <table style="width:100%; border-collapse:collapse; font-size:0.97rem;">
+                <thead>
+                    <tr>
+                        <th style="background-color:#DCEBFF; padding:10px; border:1px solid #C8D8F0;">Periodo</th>
+                        <th style="background-color:#DCEBFF; padding:10px; border:1px solid #C8D8F0;">Rentabilidad total</th>
+                        <th style="background-color:#DCEBFF; padding:10px; border:1px solid #C8D8F0;">Yield de dividendos</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td style="background-color:#F7FAFF; padding:10px; border:1px solid #D9E2F0;"><b>Último año ({last_closed_year})</b></td>
+                        <td style="background-color:#F7FAFF; padding:10px; border:1px solid #D9E2F0; text-align:center;"><b>{last_return:.2%}</b></td>
+                        <td style="background-color:#F7FAFF; padding:10px; border:1px solid #D9E2F0; text-align:center;"><b>{last_div_yield:.2%}</b></td>
+                    </tr>
+                    <tr>
+                        <td style="background-color:#F1F6FF; padding:10px; border:1px solid #D9E2F0;"><b>Histórico</b></td>
+                        <td style="background-color:#F1F6FF; padding:10px; border:1px solid #D9E2F0; text-align:center;"><b>{historical_return:.2%}</b></td>
+                        <td style="background-color:#F1F6FF; padding:10px; border:1px solid #D9E2F0; text-align:center;"><b>{historical_div_yield:.2%}</b></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # Devolver valores por si luego quieres usarlos en la proyección
+    return {
+        "last_closed_year": last_closed_year,
+        "last_return": last_return,
+        "last_div_yield": last_div_yield,
+        "historical_return": historical_return,
+        "historical_div_yield": historical_div_yield
+    }
+
+def plot_100k_projection(portfolio, df_degiro, assumptions=None, target_value=100000):
+    st.subheader("🎯 Proyección hacia 100k")
+
+    # -----------------------------------------------------------
+    # 1) PREPARAR HISTÓRICO DE CARTERA
+    # -----------------------------------------------------------
+    df = portfolio.copy()
+    df['date'] = pd.to_datetime(df['date'])
+    df = df.sort_values('date').copy()
+
+    required_cols = ['date', 'depositos', 'posiciones']
+    if not all(col in df.columns for col in required_cols):
+        st.info("Faltan columnas necesarias en portfolio para calcular la proyección a 100k.")
+        return
+
+    df = df[['date', 'depositos', 'posiciones']].copy()
+    df['depositos'] = df['depositos'].fillna(0)
+    df = df[df['posiciones'].notna()].copy()
+
+    if df.empty:
+        st.info("No hay datos suficientes de cartera para proyectar.")
+        return
+
+    # -----------------------------------------------------------
+    # 2) DIVIDENDOS HISTÓRICOS
+    # -----------------------------------------------------------
+    div = df_degiro.copy()
+    div = div[div['tipo_movimiento'] == 'DIVIDENDO'].copy()
+
+    if not div.empty:
+        div['date'] = pd.to_datetime(div['date'])
+        div = div.groupby('date', as_index=False)['importe_EUR'].sum()
+        div.rename(columns={'importe_EUR': 'dividendos'}, inplace=True)
+    else:
+        div = pd.DataFrame(columns=['date', 'dividendos'])
+
+    # Merge diario
+    hist = pd.merge(df, div, on='date', how='left')
+    hist['dividendos'] = hist['dividendos'].fillna(0)
+
+    # Acumulados reales
+    hist['dep_plus_div'] = hist['depositos'] + hist['dividendos']
+    hist['acc_dep_div'] = hist['dep_plus_div'].cumsum()
+
+    # -----------------------------------------------------------
+    # 3) AGREGAR A FOTO ANUAL (31/12 o último dato del año)
+    # -----------------------------------------------------------
+    hist['year'] = hist['date'].dt.year
+
+    annual_hist = (
+        hist.sort_values('date')
+        .groupby('year', as_index=False)
+        .agg({
+            'date': 'last',
+            'posiciones': 'last',
+            'acc_dep_div': 'last'
+        })
+    )
+
+    if annual_hist.empty:
+        st.info("No se pudieron construir las fotos anuales históricas.")
+        return
+
+    current_value = annual_hist.iloc[-1]['posiciones']
+    current_year = int(annual_hist.iloc[-1]['year'])
+
+    # -----------------------------------------------------------
+    # 4) SUPUESTOS DE PROYECCIÓN
+    # -----------------------------------------------------------
+    # Si no vienen de la tabla de supuestos, usar fallback razonable
+    if assumptions is None:
+        assumptions = {}
+
+    growth_rate = assumptions.get("return", np.nan)
+    div_yield = assumptions.get("div_yield", np.nan)
+
+    # Fallbacks si no hay supuestos válidos
+    if pd.isna(growth_rate):
+        growth_rate = 0.07
+
+    if pd.isna(div_yield):
+        div_yield = 0.02
+
+    # Aporte mensual actual:
+    # usamos promedio de los últimos 12 meses reales
+    last_date = hist['date'].max()
+    start_12m = last_date - pd.Timedelta(days=365)
+
+    hist_12m = hist[hist['date'] >= start_12m].copy()
+
+    depositos_12m = hist_12m['depositos'].sum()
+    dividendos_12m = hist_12m['dividendos'].sum()
+
+    monthly_contribution = depositos_12m / 12
+    annual_deposit = monthly_contribution * 12
+
+    # Los dividendos futuros los modelamos como yield sobre la cartera del año anterior
+    # y se reinvierten automáticamente
+    # -----------------------------------------------------------
+    # 5) PROYECCIÓN FUTURA
+    # -----------------------------------------------------------
+    projection_rows = []
+
+    future_value = current_value
+    future_acc_dep_div = annual_hist.iloc[-1]['acc_dep_div']
+    hit_target = current_value >= target_value
+    hit_year = current_year if hit_target else None
+    hit_value = current_value if hit_target else None
+
+    max_projection_years = 30
+
+    for i in range(1, max_projection_years + 1):
+        year = current_year + i
+
+        annual_dividends_proj = future_value * div_yield
+        future_acc_dep_div += annual_deposit + annual_dividends_proj
+
+        # crecimiento del capital + nuevos aportes + dividendos reinvertidos
+        future_value = (future_value * (1 + growth_rate)) + annual_deposit + annual_dividends_proj
+
+        projection_rows.append({
+            'year': year,
+            'date': pd.Timestamp(f"{year}-12-31"),
+            'posiciones': future_value,
+            'acc_dep_div': future_acc_dep_div,
+            'projected': True
+        })
+
+        if not hit_target and future_value >= target_value:
+            hit_target = True
+            hit_year = year
+            hit_value = future_value
+            break
+
+    df_proj = pd.DataFrame(projection_rows)
+
+    annual_hist['projected'] = False
+
+    plot_df = pd.concat(
+        [
+            annual_hist[['year', 'date', 'posiciones', 'acc_dep_div', 'projected']],
+            df_proj[['year', 'date', 'posiciones', 'acc_dep_div', 'projected']] if not df_proj.empty else pd.DataFrame()
+        ],
+        ignore_index=True
+    ).sort_values('year')
+
+    # -----------------------------------------------------------
+    # 6) KPIs SUPERIORES
+    # -----------------------------------------------------------
+    col1, col2, col3, col4 = st.columns(4)
+
+    col1.metric("Valor actual cartera", f"{current_value:,.0f} €")
+    col2.metric("Objetivo", f"{target_value:,.0f} €")
+    col3.metric("Aporte mensual medio", f"{monthly_contribution:,.0f} €")
+
+    if hit_target:
+        col4.metric("Año estimado 100k", f"{hit_year}")
+    else:
+        col4.metric("Año estimado 100k", "No alcanzado")
+
+    # Diagnóstico breve
+    if hit_target:
+        years_to_target = hit_year - current_year
+        diag_text = f"Manteniendo los supuestos actuales, el objetivo de 100k se alcanzaría aproximadamente en {hit_year}."
+        diag_color = "#00AA55" if years_to_target <= 10 else "#FFB000"
+    else:
+        diag_text = "Con los supuestos actuales, el objetivo de 100k no se alcanza en el horizonte proyectado."
+        diag_color = "#D62728"
+
+    st.markdown(
+        f"""
+        <div style='background-color:rgba(245,245,245,0.9);
+                    padding:10px 14px;
+                    border-radius:8px;
+                    border:1px solid rgba(180,180,180,0.8);
+                    margin-top:8px;
+                    margin-bottom:14px;'>
+            <span style='font-weight:700; color:#333;'>Diagnóstico:</span>
+            <span style='font-weight:700; color:{diag_color}; margin-left:8px;'>{diag_text}</span>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # -----------------------------------------------------------
+    # 7) GRÁFICO
+    # -----------------------------------------------------------
+    fig = go.Figure()
+
+    # Barras: acumulado depósitos + dividendos
+    fig.add_trace(go.Bar(
+        x=plot_df['year'],
+        y=plot_df['acc_dep_div'],
+        name='Acumulado Depósitos + Dividendos',
+        marker=dict(
+            color=COLOR_AUX1,
+            line=dict(color=COLOR_AUX1, width=1.0)
+        ),
+        hovertemplate='<b>%{x}</b><br>Acumulado dep. + div.: %{y:,.2f} €<extra></extra>'
+    ))
+
+    # Línea histórica real
+    hist_plot = plot_df[plot_df['projected'] == False].copy()
+    fig.add_trace(go.Scatter(
+        x=hist_plot['year'],
+        y=hist_plot['posiciones'],
+        mode='lines+markers',
+        name='Cartera histórica',
+        line=dict(color=COLOR_PRINCIPAL, width=3),
+        marker=dict(size=7),
+        hovertemplate='<b>%{x}</b><br>Valor cartera: %{y:,.2f} €<extra></extra>'
+    ))
+
+    # Línea proyectada
+    proj_plot = plot_df[plot_df['projected'] == True].copy()
+    if not proj_plot.empty:
+        fig.add_trace(go.Scatter(
+            x=proj_plot['year'],
+            y=proj_plot['posiciones'],
+            mode='lines+markers',
+            name='Proyección cartera',
+            line=dict(color=COLOR_SECUNDARIO, width=3, dash='dash'),
+            marker=dict(size=7),
+            hovertemplate='<b>%{x}</b><br>Valor proyectado: %{y:,.2f} €<extra></extra>'
+        ))
+
+    # Línea horizontal objetivo 100k
+    fig.add_hline(
+        y=target_value,
+        line_width=2,
+        line_dash="dot",
+        line_color="green",
+        annotation_text=f"Objetivo {target_value:,.0f} €",
+        annotation_position="top left"
+    )
+
+    # Punto destacado de cruce
+    if hit_target and hit_year is not None:
+        fig.add_trace(go.Scatter(
+            x=[hit_year],
+            y=[hit_value],
+            mode='markers',
+            name='Cruce 100k',
+            marker=dict(
+                size=15,
+                color='green',
+                line=dict(color='white', width=1.5)
+            ),
+            hovertemplate='<b>Objetivo alcanzado</b><br>Año: %{x}<br>Valor: %{y:,.2f} €<extra></extra>'
+        ))
+
+    fig.update_layout(
+        title=dict(
+            text="Camino hacia 100k: histórico y proyección",
+            x=0.5,
+            xanchor='center',
+            font=dict(size=18)
+        ),
+        xaxis=dict(
+            title="Año",
+            tickmode='linear'
+        ),
+        yaxis=dict(
+            title="Importe (€)",
+            gridcolor='rgba(200,200,200,0.3)'
+        ),
+        legend=dict(
+            orientation='h',
+            yanchor='bottom',
+            y=1.02,
+            xanchor='center',
+            x=0.5
+        ),
+        barmode='group',
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        hoverlabel=dict(bgcolor=HOVER_BG, font=HOVER_FONT),
+        margin=dict(t=90, b=70, l=60, r=40),
+        shapes=[dict(
+            type="rect",
+            xref="paper",
+            yref="paper",
+            x0=0, y0=0, x1=1, y1=1,
+            line=dict(color=COLOR_BORDE, width=1)
+        )]
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # -----------------------------------------------------------
+    # 8) TABLA DE PROYECCIÓN
+    # -----------------------------------------------------------
+    with st.expander("Ver detalle de la proyección"):
+        show_df = plot_df.copy()
+        show_df['Tipo'] = np.where(show_df['projected'], 'Proyección', 'Histórico')
+        show_df['Valor cartera'] = show_df['posiciones'].map(lambda x: f"{x:,.0f} €")
+        show_df['Acum. dep. + div.'] = show_df['acc_dep_div'].map(lambda x: f"{x:,.0f} €")
+
+        st.dataframe(
+            show_df[['year', 'Tipo', 'Valor cartera', 'Acum. dep. + div.']].rename(columns={'year': 'Año'}),
+            use_container_width=True
+        )
 
 # -------------------------------------------------------------------------------------------------------------------------- #
 
@@ -2249,6 +2695,10 @@ with tab1:
     plot_annual_returns_table(portfolio, all_stocks)
     st.divider()
     plot_income_evolution_table(portfolio, df_degiro)
+    st.divider()
+    assumptions = plot_projection_assumptions_table(portfolio, df_degiro)
+    plot_100k_projection(portfolio, df_degiro, assumptions=assumptions)
+    
 
 with tab2:
     plot_dividends_by_company(df_degiro)
