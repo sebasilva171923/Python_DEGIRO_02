@@ -79,6 +79,12 @@ HOVER_FONT = dict(color="white", size=13)
 # FUNCIONES DE GRÁFICOS
 # ---------------------------------------------------------------
 
+# -------------------------------------------------------------------------------------------------------------------------- #
+
+# ------------------------------------------------------- PESTAÑA 01 ------------------------------------------------------- #
+
+# -------------------------------------------------------------------------------------------------------------------------- #
+
 def plot_portfolio_trend(portfolio):
     portfolio['date'] = pd.to_datetime(portfolio['date'])
     dates_num = (portfolio['date'] - portfolio['date'].min()).dt.days
@@ -352,6 +358,12 @@ def plot_semester_snapshots(portfolio):
     )
 
     st.plotly_chart(fig, use_container_width=True)
+
+# -------------------------------------------------------------------------------------------------------------------------- #
+
+# ------------------------------------------------------- PESTAÑA 02 ------------------------------------------------------- #
+
+# -------------------------------------------------------------------------------------------------------------------------- #
 
 
 def plot_dividends_by_company(df_degiro):
@@ -659,11 +671,16 @@ def plot_price_with_trades(selected_ticker, df_prices, df_ops):
 
     st.plotly_chart(fig, use_container_width=True)
 
+# -------------------------------------------------------------------------------------------------------------------------- #
+
+# ------------------------------------------------------- PESTAÑA 03 ------------------------------------------------------- #
+
+# -------------------------------------------------------------------------------------------------------------------------- #
 
 # ---------------------------------------------------------------
 # NUEVA FUNCIÓN: ANÁLISIS POR POSICIÓN
 # ---------------------------------------------------------------
-def analysis_by_position(df_degiro, all_stocks):
+def analysis_by_position(df_degiro, all_stocks, df_portfolio_ticker):
     st.subheader("📊 Análisis por Acción")
 
     # --- Filtramos movimientos válidos ---
@@ -689,6 +706,36 @@ def analysis_by_position(df_degiro, all_stocks):
     dividendos = df_emp.loc[df_emp["tipo_movimiento"] == "DIVIDENDO", "importe_EUR"].sum()
 
     resultado = ventas + compras if acciones_actuales == 0 else None
+
+        # --- Obtener valor actual de la posición desde df_portfolio_ticker ---
+    valor_actual_posicion = 0.0
+
+    if 'ticker' in df_emp.columns and df_emp['ticker'].notna().any():
+        ticker_sel = df_emp['ticker'].dropna().iloc[0]
+
+        df_pt = df_portfolio_ticker.copy()
+        df_pt['date'] = pd.to_datetime(df_pt['date'])
+
+        df_pt_ticker = df_pt[df_pt['ticker'] == ticker_sel].copy()
+
+        if not df_pt_ticker.empty:
+            last_date_pt = df_pt_ticker['date'].max()
+            df_pt_last = df_pt_ticker[df_pt_ticker['date'] == last_date_pt].copy()
+
+            if 'importe_EUR' in df_pt_last.columns:
+                valor_actual_posicion = df_pt_last['importe_EUR'].sum()
+
+    # --- Ganancia/Pérdida por posición ---
+    # Cerrada: ventas + compras
+    # Abierta: valor actual + ventas + compras
+    ganancia_posicion = (ventas + compras) if acciones_actuales == 0 else (valor_actual_posicion + ventas + compras)
+
+    # --- Ganancia/Pérdida total incluyendo dividendos ---
+    ganancia_total = ganancia_posicion + dividendos
+
+    # --- Rentabilidad total (%) ---
+    base_inversion = abs(compras)
+    rentabilidad_total_pct = (ganancia_total / base_inversion) if base_inversion > 0 else np.nan
 
     # --- Color dinámico para la moneda ---
     if moneda == "EUR":
@@ -751,6 +798,41 @@ def analysis_by_position(df_degiro, all_stocks):
                 f"<b style='color:#333333;'>Resultado Posición Cerrada:</b> "
                 f"<span style='color:gray;font-weight:bold'>N/A (posición abierta)</span>"
                 f"</div>", unsafe_allow_html=True)
+            
+    # --- Tercera fila: rentabilidad total de la posición ---
+    col7, col8, col9 = st.columns(3)
+
+    color_gp = "#00CC66" if ganancia_posicion >= 0 else "#FF4B4B"
+    color_gt = "#00CC66" if ganancia_total >= 0 else "#FF4B4B"
+    color_rt = "#00CC66" if (pd.notna(rentabilidad_total_pct) and rentabilidad_total_pct >= 0) else "#FF4B4B"
+
+    with col7:
+        st.markdown(
+            f"<div style='background-color:rgba(245,245,245,0.7);padding:10px;border-radius:8px;'>"
+            f"<b>Ganancia/Pérdida por Posición</b><br>"
+            f"<span style='color:{color_gp};font-weight:bold'>{ganancia_posicion:,.2f} €</span>"
+            f"</div>",
+            unsafe_allow_html=True
+        )
+
+    with col8:
+        st.markdown(
+            f"<div style='background-color:rgba(245,245,245,0.7);padding:10px;border-radius:8px;'>"
+            f"<b>Ganancia/Pérdida Incl. Dividendos</b><br>"
+            f"<span style='color:{color_gt};font-weight:bold'>{ganancia_total:,.2f} €</span>"
+            f"</div>",
+            unsafe_allow_html=True
+        )
+
+    with col9:
+        rent_text = f"{rentabilidad_total_pct:,.2%}" if pd.notna(rentabilidad_total_pct) else "N/A"
+        st.markdown(
+            f"<div style='background-color:rgba(245,245,245,0.7);padding:10px;border-radius:8px;'>"
+            f"<b>Rentabilidad Total (%)</b><br>"
+            f"<span style='color:{color_rt};font-weight:bold'>{rent_text}</span>"
+            f"</div>",
+            unsafe_allow_html=True
+        )
 
     st.divider()
 
@@ -762,6 +844,14 @@ def analysis_by_position(df_degiro, all_stocks):
         plot_price_with_trades(ticker_sel, all_stocks, df_emp)
     else:
         st.info("No se encontró el ticker para esta empresa, no se puede dibujar el gráfico de precio.")
+
+# -------------------------------------------------------------------------------------------------------------------------- #
+
+# ------------------------------------------------------- PESTAÑA 04 ------------------------------------------------------- #
+
+# -------------------------------------------------------------------------------------------------------------------------- #
+
+
 
 def plot_structural_diversification(df_portfolio_ticker):
     st.subheader("🧩 Diversificación Estructural")
@@ -1795,7 +1885,7 @@ with tab2:
     plot_dividends_yearly_growth(df_degiro)
 
 with tab3:
-    analysis_by_position(df_degiro, all_stocks)
+    analysis_by_position(df_degiro, all_stocks, df_portfolio_ticker)
 
 with tab4:
     plot_structural_diversification(df_portfolio_ticker)
