@@ -84,6 +84,53 @@ HOVER_FONT = dict(color="white", size=13)
 # ------------------------------------------------------- PESTAÑA 01 ------------------------------------------------------- #
 
 # -------------------------------------------------------------------------------------------------------------------------- #
+def xirr_from_cashflows(cashflows_df):
+    """
+    cashflows_df: DataFrame con columnas ['date', 'cashflow']
+    cashflow negativo = inversión / depósito
+    cashflow positivo = dividendo / valor final
+    """
+    cf = cashflows_df.copy()
+    cf['date'] = pd.to_datetime(cf['date'])
+    cf = cf.sort_values('date').copy()
+
+    if cf.empty or len(cf) < 2:
+        return np.nan
+
+    dates = cf['date'].tolist()
+    amounts = cf['cashflow'].tolist()
+
+    # Debe haber al menos un flujo negativo y uno positivo
+    if not (any(a < 0 for a in amounts) and any(a > 0 for a in amounts)):
+        return np.nan
+
+    def npv(rate):
+        return sum(
+            amt / ((1 + rate) ** ((d - dates[0]).days / 365.25))
+            for amt, d in zip(amounts, dates)
+        )
+
+    # Newton-Raphson simple
+    rate = 0.10
+    for _ in range(100):
+        f = npv(rate)
+        h = 1e-6
+        df_rate = (npv(rate + h) - f) / h
+
+        if abs(df_rate) < 1e-12:
+            break
+
+        new_rate = rate - f / df_rate
+
+        if new_rate <= -0.9999:
+            new_rate = -0.9999
+
+        if abs(new_rate - rate) < 1e-8:
+            return new_rate
+
+        rate = new_rate
+
+    return rate
 
 def plot_portfolio_trend(portfolio):
     portfolio['date'] = pd.to_datetime(portfolio['date'])
@@ -122,7 +169,6 @@ def plot_portfolio_trend(portfolio):
                      line=dict(color=COLOR_BORDE, width=1))]
     )
     st.plotly_chart(fig, use_container_width=True)
-
 
 def plot_portfolio_data(portfolio, all_stocks):
     ticker = 'VUSA.MI'
@@ -359,18 +405,18 @@ def plot_semester_snapshots(portfolio):
 
     st.plotly_chart(fig, use_container_width=True)
 
-def plot_annual_returns_table(portfolio, all_stocks, benchmark_ticker="VUSA.MI"):
+def plot_annual_returns_table(portfolio, all_stocks, df_degiro, benchmark_ticker="VUSA.MI"):
     st.subheader("📅 Rentabilidad Anual de la Cartera vs S&P 500")
 
     # -----------------------------------------------------------
-    # 1) PREPARAR CARTERA
+    # 1) PREPARAR PORTFOLIO
     # -----------------------------------------------------------
     df = portfolio.copy()
     df['date'] = pd.to_datetime(df['date'])
     df = df.sort_values('date').copy()
 
-    if 'posiciones' not in df.columns:
-        st.info("No existe la columna 'posiciones' en portfolio para calcular rentabilidades.")
+    if 'posiciones' not in df.columns or 'depositos' not in df.columns:
+        st.info("Faltan columnas 'posiciones' o 'depositos' en portfolio.")
         return
 
     df = df[['date', 'posiciones', 'depositos']].copy()
@@ -378,15 +424,11 @@ def plot_annual_returns_table(portfolio, all_stocks, benchmark_ticker="VUSA.MI")
     df = df[df['posiciones'].notna()].copy()
 
     if len(df) < 2:
-        st.info("No hay suficientes datos para calcular la rentabilidad anual.")
+        st.info("No hay suficientes datos para calcular rentabilidades.")
         return
 
-    # -----------------------------------------------------------
-    # 2) QUEDARNOS SOLO CON AÑOS CERRADOS
-    #    Si el último año está abierto, no se incluye
-    # -----------------------------------------------------------
+    # Último año cerrado
     last_date = df['date'].max()
-
     if last_date.month == 12 and last_date.day == 31:
         last_closed_year = last_date.year
     else:
@@ -395,177 +437,202 @@ def plot_annual_returns_table(portfolio, all_stocks, benchmark_ticker="VUSA.MI")
     df = df[df['date'].dt.year <= last_closed_year].copy()
 
     if df.empty:
-        st.info("Todavía no hay años cerrados suficientes para calcular la rentabilidad anual.")
+        st.info("No hay años cerrados suficientes para mostrar la tabla.")
         return
 
     # -----------------------------------------------------------
-    # 3) RENTABILIDAD DIARIA AJUSTADA POR FLUJOS (TWR simplificado)
+    # 2) PREPARAR DIVIDENDOS
     # -----------------------------------------------------------
-    df['valor_prev'] = df['posiciones'].shift(1)
+    div = df_degiro.copy()
+    div = div[div['tipo_movimiento'] == 'DIVIDENDO'].copy()
 
-    df['daily_return'] = np.where(
-        (df['valor_prev'].notna()) & (df['valor_prev'] != 0),
-        (df['posiciones'] - df['valor_prev'] - df['depositos']) / df['valor_prev'],
-        np.nan
-    )
-
-    df['year'] = df['date'].dt.year
+    if not div.empty:
+        div['date'] = pd.to_datetime(div['date'])
+        div = div[['date', 'importe_EUR']].copy()
+        div.rename(columns={'importe_EUR': 'dividendos'}, inplace=True)
+        div = div[div['date'].dt.year <= last_closed_year].copy()
+    else:
+        div = pd.DataFrame(columns=['date', 'dividendos'])
 
     # -----------------------------------------------------------
-    # 4) PREPARAR BENCHMARK (S&P500 vía VUSA.MI)
+    # 3) XIRR TOTAL DE LA CARTERA (desde inicio hasta hoy/última fecha)
+    # -----------------------------------------------------------
+    # depósitos = negativo
+    df_dep_total = df[df['depositos'] != 0][['date', 'depositos']].copy()
+    df_dep_total['cashflow'] = -df_dep_total['depositos']
+
+    # dividendos = positivo
+    if not div.empty:
+        df_div_total = div[['date', 'dividendos']].copy()
+        df_div_total.rename(columns={'dividendos': 'cashflow'}, inplace=True)
+    else:
+        df_div_total = pd.DataFrame(columns=['date', 'cashflow'])
+
+    final_value = df.sort_values('date').iloc[-1]['posiciones']
+    final_date = df.sort_values('date').iloc[-1]['date']
+
+    total_cf = pd.concat([
+        df_dep_total[['date', 'cashflow']],
+        df_div_total[['date', 'cashflow']],
+        pd.DataFrame([{'date': final_date, 'cashflow': final_value}])
+    ], ignore_index=True).sort_values('date')
+
+    total_xirr = xirr_from_cashflows(total_cf)
+
+    # -----------------------------------------------------------
+    # 4) RENTABILIDAD ANUAL POR XIRR
+    # -----------------------------------------------------------
+    years = sorted(df['date'].dt.year.unique().tolist())
+    annual_rows = []
+
+    for year in years:
+        g = df[df['date'].dt.year == year].sort_values('date').copy()
+        if g.empty:
+            continue
+
+        start_date = g.iloc[0]['date']
+        end_date = g.iloc[-1]['date']
+        start_value = g.iloc[0]['posiciones']
+        end_value = g.iloc[-1]['posiciones']
+
+        # Cashflows del año:
+        # valor inicial = negativo
+        # depósitos del año = negativos
+        # dividendos del año = positivos
+        # valor final = positivo
+        year_cf_parts = []
+
+        year_cf_parts.append(pd.DataFrame([{
+            'date': start_date,
+            'cashflow': -start_value
+        }]))
+
+        dep_year = g[g['depositos'] != 0][['date', 'depositos']].copy()
+        if not dep_year.empty:
+            dep_year['cashflow'] = -dep_year['depositos']
+            year_cf_parts.append(dep_year[['date', 'cashflow']])
+
+        div_year = div[div['date'].dt.year == year].copy()
+        if not div_year.empty:
+            div_year = div_year[['date', 'dividendos']].copy()
+            div_year.rename(columns={'dividendos': 'cashflow'}, inplace=True)
+            year_cf_parts.append(div_year[['date', 'cashflow']])
+
+        year_cf_parts.append(pd.DataFrame([{
+            'date': end_date,
+            'cashflow': end_value
+        }]))
+
+        year_cf = pd.concat(year_cf_parts, ignore_index=True).sort_values('date')
+
+        xirr_year = xirr_from_cashflows(year_cf)
+
+        annual_rows.append({
+            'Año': year,
+            'Valor inicio (€)': start_value,
+            'Valor fin (€)': end_value,
+            'Depósitos año (€)': g['depositos'].sum(),
+            'Dividendos año (€)': div_year['cashflow'].sum() if not div_year.empty else 0.0,
+            'XIRR cartera': xirr_year
+        })
+
+    df_annual = pd.DataFrame(annual_rows)
+
+    if df_annual.empty:
+        st.info("No se pudieron calcular XIRRs anuales.")
+        return
+
+    # -----------------------------------------------------------
+    # 5) BENCHMARK ANUAL (S&P500 proxy)
     # -----------------------------------------------------------
     bench = all_stocks.copy()
     bench['date'] = pd.to_datetime(bench['date'])
     bench = bench[bench['ticker'].astype(str).str.strip() == benchmark_ticker].copy()
 
-    if bench.empty:
-        st.info(f"No hay datos del benchmark {benchmark_ticker} para comparar.")
-        return
+    if not bench.empty:
+        bench = bench[['date', 'Close']].dropna().sort_values('date').copy()
+        bench = bench[bench['date'].dt.year <= last_closed_year].copy()
+        bench['year'] = bench['date'].dt.year
 
-    bench = bench[['date', 'Close']].dropna().sort_values('date').copy()
-    bench = bench[bench['date'].dt.year <= last_closed_year].copy()
+        bench_rows = []
+        for year in df_annual['Año'].tolist():
+            g = bench[bench['year'] == year].sort_values('date').copy()
 
-    if bench.empty:
-        st.info(f"No hay años cerrados del benchmark {benchmark_ticker} para comparar.")
-        return
+            if len(g) >= 2:
+                ret_bench = (g.iloc[-1]['Close'] / g.iloc[0]['Close']) - 1
+            else:
+                ret_bench = np.nan
 
-    bench['year'] = bench['date'].dt.year
-    bench['daily_return'] = bench['Close'].pct_change()
+            bench_rows.append({
+                'Año': year,
+                'Rentabilidad S&P 500': ret_bench
+            })
 
-    # -----------------------------------------------------------
-    # 5) RENTABILIDAD POR AÑO NATURAL (CARTERA)
-    # -----------------------------------------------------------
-    annual_rows = []
-
-    closed_years = sorted(df['year'].dropna().unique().tolist())
-
-    for year in closed_years:
-        g = df[df['year'] == year].sort_values('date').copy()
-        valid_returns = g['daily_return'].dropna()
-
-        if len(valid_returns) == 0:
-            annual_return = np.nan
-        else:
-            annual_return = (1 + valid_returns).prod() - 1
-
-        valor_inicio = g.iloc[0]['posiciones']
-        valor_fin = g.iloc[-1]['posiciones']
-        depositos_ano = g['depositos'].sum()
-
-        annual_rows.append({
-            'Año': year,
-            'Valor inicio (€)': valor_inicio,
-            'Valor fin (€)': valor_fin,
-            'Depósitos año (€)': depositos_ano,
-            'Rentabilidad cartera': annual_return
-        })
-
-    df_annual = pd.DataFrame(annual_rows)
-
-    # -----------------------------------------------------------
-    # 6) RENTABILIDAD POR AÑO NATURAL (BENCHMARK)
-    # -----------------------------------------------------------
-    bench_rows = []
-
-    for year in closed_years:
-        g = bench[bench['year'] == year].sort_values('date').copy()
-        valid_returns = g['daily_return'].dropna()
-
-        if len(valid_returns) == 0:
-            bench_return = np.nan
-        else:
-            bench_return = (1 + valid_returns).prod() - 1
-
-        bench_rows.append({
-            'Año': year,
-            'Rentabilidad S&P 500': bench_return
-        })
-
-    df_bench_annual = pd.DataFrame(bench_rows)
-
-    # Unir cartera + benchmark
-    df_annual = df_annual.merge(df_bench_annual, on='Año', how='left')
-    df_annual['Diferencia'] = df_annual['Rentabilidad cartera'] - df_annual['Rentabilidad S&P 500']
-
-    # -----------------------------------------------------------
-    # 7) RENTABILIDAD ANUALIZADA SOLO SOBRE AÑOS CERRADOS
-    # -----------------------------------------------------------
-    # Cartera
-    df_ann_valid = df_annual.dropna(subset=['Rentabilidad cartera']).copy()
-
-    if not df_ann_valid.empty:
-        total_return_port = (1 + df_ann_valid['Rentabilidad cartera']).prod() - 1
-        n_years_port = len(df_ann_valid)
-
-        if n_years_port > 0 and (1 + total_return_port) > 0:
-            annualized_port = (1 + total_return_port) ** (1 / n_years_port) - 1
-        else:
-            annualized_port = np.nan
+        df_bench = pd.DataFrame(bench_rows)
+        df_annual = df_annual.merge(df_bench, on='Año', how='left')
     else:
-        annualized_port = np.nan
+        df_annual['Rentabilidad S&P 500'] = np.nan
 
-    # Benchmark
-    df_bench_valid = df_annual.dropna(subset=['Rentabilidad S&P 500']).copy()
+    df_annual['Diferencia'] = df_annual['XIRR cartera'] - df_annual['Rentabilidad S&P 500']
 
-    if not df_bench_valid.empty:
-        total_return_bench = (1 + df_bench_valid['Rentabilidad S&P 500']).prod() - 1
-        n_years_bench = len(df_bench_valid)
-
-        if n_years_bench > 0 and (1 + total_return_bench) > 0:
-            annualized_bench = (1 + total_return_bench) ** (1 / n_years_bench) - 1
-        else:
-            annualized_bench = np.nan
+    # -----------------------------------------------------------
+    # 6) KPIs SUPERIORES
+    # -----------------------------------------------------------
+    # CAGR benchmark en años cerrados
+    bench_valid = df_annual['Rentabilidad S&P 500'].dropna()
+    if len(bench_valid) > 0 and ((1 + bench_valid) > 0).all():
+        bench_annualized = (1 + bench_valid).prod() ** (1 / len(bench_valid)) - 1
     else:
-        annualized_bench = np.nan
+        bench_annualized = np.nan
 
-    annualized_diff = annualized_port - annualized_bench if pd.notna(annualized_port) and pd.notna(annualized_bench) else np.nan
+    total_diff = total_xirr - bench_annualized if pd.notna(total_xirr) and pd.notna(bench_annualized) else np.nan
 
-    # -----------------------------------------------------------
-    # 8) KPIs SUPERIORES
-    # -----------------------------------------------------------
     col1, col2, col3 = st.columns(3)
 
     col1.metric(
-        "Rentabilidad anualizada cartera",
-        f"{annualized_port:.2%}" if pd.notna(annualized_port) else "N/A"
+        "XIRR total cartera",
+        f"{total_xirr:.2%}" if pd.notna(total_xirr) else "N/A"
     )
 
     col2.metric(
         "Rentabilidad anualizada S&P 500",
-        f"{annualized_bench:.2%}" if pd.notna(annualized_bench) else "N/A"
+        f"{bench_annualized:.2%}" if pd.notna(bench_annualized) else "N/A"
     )
 
-    diff_text = f"{annualized_diff:+.2%}" if pd.notna(annualized_diff) else "N/A"
-    col3.metric("Diferencia anualizada", diff_text)
+    col3.metric(
+        "Diferencia",
+        f"{total_diff:+.2%}" if pd.notna(total_diff) else "N/A"
+    )
 
     # -----------------------------------------------------------
-    # 9) TABLA FORMATEADA
+    # 7) TABLA FORMATEADA
     # -----------------------------------------------------------
     df_show = df_annual.copy()
 
     df_show['Valor inicio (€)'] = df_show['Valor inicio (€)'].map(lambda x: f"{x:,.2f} €")
     df_show['Valor fin (€)'] = df_show['Valor fin (€)'].map(lambda x: f"{x:,.2f} €")
     df_show['Depósitos año (€)'] = df_show['Depósitos año (€)'].map(lambda x: f"{x:,.2f} €")
-    df_show['Rentabilidad cartera'] = df_show['Rentabilidad cartera'].map(lambda x: f"{x:.2%}" if pd.notna(x) else "N/A")
+    df_show['Dividendos año (€)'] = df_show['Dividendos año (€)'].map(lambda x: f"{x:,.2f} €")
+    df_show['XIRR cartera'] = df_show['XIRR cartera'].map(lambda x: f"{x:.2%}" if pd.notna(x) else "N/A")
     df_show['Rentabilidad S&P 500'] = df_show['Rentabilidad S&P 500'].map(lambda x: f"{x:.2%}" if pd.notna(x) else "N/A")
     df_show['Diferencia'] = df_annual['Diferencia'].map(lambda x: f"{x:+.2%}" if pd.notna(x) else "N/A")
 
     st.dataframe(df_show, use_container_width=True)
 
     # -----------------------------------------------------------
-    # 10) ACLARACIÓN METODOLÓGICA
+    # 8) METODOLOGÍA
     # -----------------------------------------------------------
     with st.expander("Ver metodología del cálculo"):
         st.markdown(
             f"""
-            **Cómo se calcula esta rentabilidad:**
-
-            - Se usa la columna **`posiciones`** como valor de la cartera.
-            - Se ajusta por los **depósitos** para no confundir aportaciones de capital con rendimiento.
-            - La rentabilidad anual de la cartera se calcula encadenando las rentabilidades diarias ajustadas por flujos.
-            - El benchmark usado para el **S&P 500** es **`{benchmark_ticker}`**.
-            - Solo se incluyen **años cerrados**; el año en curso no aparece hasta estar completo.
-            - La **rentabilidad anualizada** superior se calcula únicamente sobre los años cerrados incluidos en la tabla.
+            - La columna **XIRR cartera** se calcula año a año usando:
+              - valor inicial del año como flujo negativo
+              - depósitos como flujos negativos
+              - dividendos como flujos positivos
+              - valor final del año como flujo positivo
+            - La tarjeta superior **XIRR total cartera** usa todos los depósitos, todos los dividendos y el valor actual final.
+            - El benchmark del S&P 500 se aproxima con **{benchmark_ticker}**.
+            - Solo se incluyen **años cerrados**.
             """
         )
 
@@ -2808,7 +2875,7 @@ with tab1:
     st.divider()
     plot_semester_snapshots(portfolio)
     st.divider()
-    plot_annual_returns_table(portfolio, all_stocks)
+    plot_annual_returns_table(portfolio, all_stocks, df_degiro)
     st.divider()
     plot_income_evolution_table(portfolio, df_degiro)
     st.divider()
