@@ -931,7 +931,7 @@ def plot_100k_projection(portfolio, df_degiro, assumptions=None, target_value=10
     hist['acc_dep_div'] = hist['dep_plus_div'].cumsum()
 
     # -----------------------------------------------------------
-    # 3) AGREGAR A FOTO ANUAL (31/12 o último dato del año)
+    # 3) AGREGAR A FOTO ANUAL (último dato disponible de cada año)
     # -----------------------------------------------------------
     hist['year'] = hist['date'].dt.year
 
@@ -955,25 +955,37 @@ def plot_100k_projection(portfolio, df_degiro, assumptions=None, target_value=10
     # -----------------------------------------------------------
     # 4) SUPUESTOS DE PROYECCIÓN
     # -----------------------------------------------------------
-    # Si no vienen de la tabla de supuestos, usar fallback razonable
     if assumptions is None:
         assumptions = {}
 
-    growth_rate = assumptions.get("return", np.nan)
+    # Yield histórico de dividendos
     div_yield = assumptions.get("div_yield", np.nan)
-
-    # Fallbacks si no hay supuestos válidos
-    if pd.isna(growth_rate):
-        growth_rate = 0.07
-
     if pd.isna(div_yield):
         div_yield = 0.02
+
+    # CAGR real de la cartera usando fotos anuales
+    # Si hay al menos 3 años, excluimos el primero por si fue parcial
+    if len(annual_hist) >= 3:
+        annual_hist_for_growth = annual_hist.iloc[1:].copy()
+    else:
+        annual_hist_for_growth = annual_hist.copy()
+
+    first_valid = annual_hist_for_growth.iloc[0]
+    last_valid = annual_hist_for_growth.iloc[-1]
+
+    start_value = first_valid['posiciones']
+    end_value = last_valid['posiciones']
+    n_years = max(len(annual_hist_for_growth) - 1, 1)
+
+    if start_value > 0 and end_value > 0:
+        growth_rate = (end_value / start_value) ** (1 / n_years) - 1
+    else:
+        growth_rate = 0.07
 
     # -----------------------------------------------------------
     # 4.b) FLUJOS USADOS EN LA PROYECCIÓN
     #     Usamos los promedios históricos ya calculados arriba
     # -----------------------------------------------------------
-    
     monthly_deposit = assumptions.get("avg_dep_monthly_hist", np.nan)
     monthly_dividend = assumptions.get("avg_div_monthly_hist", np.nan)
 
@@ -986,8 +998,6 @@ def plot_100k_projection(portfolio, df_degiro, assumptions=None, target_value=10
     monthly_contribution = monthly_deposit + monthly_dividend
     annual_deposit = monthly_deposit * 12
 
-    # Los dividendos futuros los modelamos como yield sobre la cartera del año anterior
-    # y se reinvierten automáticamente
     # -----------------------------------------------------------
     # 5) PROYECCIÓN FUTURA
     # -----------------------------------------------------------
@@ -1004,10 +1014,14 @@ def plot_100k_projection(portfolio, df_degiro, assumptions=None, target_value=10
     for i in range(1, max_projection_years + 1):
         year = current_year + i
 
+        # Dividendos proyectados como yield sobre la cartera
         annual_dividends_proj = future_value * div_yield
+
+        # Acumulado de depósitos + dividendos
         future_acc_dep_div += annual_deposit + annual_dividends_proj
 
-        # crecimiento del capital + nuevos aportes + dividendos reinvertidos
+        # Valor proyectado de cartera:
+        # capital crece + aportes + dividendos reinvertidos
         future_value = (future_value * (1 + growth_rate)) + annual_deposit + annual_dividends_proj
 
         projection_rows.append({
