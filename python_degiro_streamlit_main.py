@@ -600,13 +600,10 @@ def plot_income_evolution_table(portfolio, df_degiro):
     df = df.sort_values('year')
 
     # -----------------------------------------------------------
-    # 4) SOLO AÑOS CERRADOS
+    # 4) INCLUIR TAMBIÉN EL AÑO EN CURSO
     # -----------------------------------------------------------
-    current_year = datetime.now().year
-    df = df[df['year'] < current_year]
-
     if df.empty:
-        st.info("No hay años cerrados suficientes para mostrar ingresos.")
+        st.info("No hay datos suficientes para mostrar ingresos.")
         return
 
     # -----------------------------------------------------------
