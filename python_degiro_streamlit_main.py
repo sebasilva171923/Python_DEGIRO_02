@@ -1580,6 +1580,205 @@ def plot_drawdown_analysis(portfolio):
 
         st.dataframe(summary_df, use_container_width=True)
 
+# GRAFICO DE CORRELACIONES ENTRE POSICIONES ---------------------
+
+def plot_correlation_heatmap(df_portfolio_ticker, all_stocks):
+    st.subheader("🧠 Correlación entre Activos")
+
+    # -----------------------------------------------------------
+    # 1) OBTENER CARTERA ACTUAL
+    # -----------------------------------------------------------
+    df_pos = df_portfolio_ticker.copy()
+    df_pos['date'] = pd.to_datetime(df_pos['date'])
+
+    last_date = df_pos['date'].max()
+    df_last = df_pos[df_pos['date'] == last_date].copy()
+    df_last = df_last[df_last['importe_EUR'].fillna(0) > 0].copy()
+
+    if df_last.empty:
+        st.info("No hay posiciones válidas en la última fecha para calcular correlaciones.")
+        return
+
+    df_last = df_last.groupby('ticker', as_index=False)['importe_EUR'].sum()
+    tickers = df_last['ticker'].tolist()
+
+    # -----------------------------------------------------------
+    # 2) PREPARAR PRECIOS HISTÓRICOS
+    # -----------------------------------------------------------
+    df_prices = all_stocks.copy()
+    df_prices['date'] = pd.to_datetime(df_prices['date'])
+    df_prices['ticker'] = df_prices['ticker'].astype(str).str.strip()
+
+    df_prices = df_prices[df_prices['ticker'].isin(tickers)].copy()
+
+    if df_prices.empty:
+        st.info("No hay histórico de precios para los tickers actuales de la cartera.")
+        return
+
+    prices = df_prices.pivot_table(index='date', columns='ticker', values='Close', aggfunc='last')
+    prices = prices.sort_index()
+
+    # Mantener solo tickers comunes
+    common_tickers = [t for t in tickers if t in prices.columns]
+    if len(common_tickers) < 2:
+        st.info("No hay suficientes activos con histórico de precios para calcular correlaciones.")
+        return
+
+    prices = prices[common_tickers].copy()
+
+    # Filtrar columnas con suficiente cobertura
+    valid_ratio = prices.notna().mean()
+    keep_cols = valid_ratio[valid_ratio >= 0.7].index.tolist()
+
+    if len(keep_cols) < 2:
+        st.info("No hay suficientes activos con datos históricos consistentes para calcular correlaciones.")
+        return
+
+    prices = prices[keep_cols].copy()
+    prices = prices.ffill().dropna(how='all')
+
+    returns = prices.pct_change().dropna()
+
+    if returns.shape[0] < 30 or returns.shape[1] < 2:
+        st.info("No hay suficientes retornos para construir el heatmap de correlación.")
+        return
+
+    # -----------------------------------------------------------
+    # 3) MATRIZ DE CORRELACIÓN
+    # -----------------------------------------------------------
+    corr_matrix = returns.corr()
+
+    # KPI auxiliar: correlación media fuera de diagonal
+    corr_values = corr_matrix.values
+    upper_vals = corr_values[np.triu_indices_from(corr_values, k=1)]
+
+    avg_corr = np.nanmean(upper_vals) if len(upper_vals) > 0 else np.nan
+    max_corr = np.nanmax(upper_vals) if len(upper_vals) > 0 else np.nan
+    min_corr = np.nanmin(upper_vals) if len(upper_vals) > 0 else np.nan
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Correlación media", f"{avg_corr:.2f}" if pd.notna(avg_corr) else "N/A")
+    col2.metric("Correlación máxima", f"{max_corr:.2f}" if pd.notna(max_corr) else "N/A")
+    col3.metric("Correlación mínima", f"{min_corr:.2f}" if pd.notna(min_corr) else "N/A")
+
+    # Diagnóstico simple
+    if pd.notna(avg_corr):
+        if avg_corr >= 0.70:
+            diag_text = "La cartera muestra una correlación media alta: la diversificación real es limitada."
+            diag_color = "#D62728"
+        elif avg_corr >= 0.40:
+            diag_text = "La cartera tiene una correlación media moderada: existe diversificación, pero con bloques similares."
+            diag_color = "#FFB000"
+        else:
+            diag_text = "La cartera presenta una correlación media contenida: la diversificación real parece buena."
+            diag_color = "#00AA55"
+    else:
+        diag_text = "No se pudo calcular un diagnóstico de correlación."
+        diag_color = "#777777"
+
+    st.markdown(
+        f"""
+        <div style='background-color:rgba(245,245,245,0.9);
+                    padding:10px 14px;
+                    border-radius:8px;
+                    border:1px solid rgba(180,180,180,0.8);
+                    margin-top:8px;
+                    margin-bottom:14px;'>
+            <span style='font-weight:700; color:#333;'>Diagnóstico:</span>
+            <span style='font-weight:700; color:{diag_color}; margin-left:8px;'>{diag_text}</span>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # -----------------------------------------------------------
+    # 4) HEATMAP
+    # -----------------------------------------------------------
+    fig = go.Figure(data=go.Heatmap(
+        z=corr_matrix.values,
+        x=corr_matrix.columns,
+        y=corr_matrix.index,
+        zmin=-1,
+        zmax=1,
+        colorscale='RdBu',
+        reversescale=True,
+        colorbar=dict(title="Corr"),
+        text=np.round(corr_matrix.values, 2),
+        texttemplate="%{text}",
+        textfont={"size": 10},
+        hovertemplate=(
+            "<b>%{y}</b> vs <b>%{x}</b><br>"
+            "Correlación: %{z:.2f}<extra></extra>"
+        )
+    ))
+
+    fig.update_layout(
+        title=dict(
+            text=f"Heatmap de Correlación (foto actual: {last_date.strftime('%d/%m/%Y')})",
+            x=0.5,
+            xanchor='center',
+            font=dict(size=18)
+        ),
+        xaxis=dict(
+            title="Ticker",
+            tickangle=-45
+        ),
+        yaxis=dict(
+            title="Ticker",
+            autorange='reversed'
+        ),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        hoverlabel=dict(bgcolor=HOVER_BG, font=HOVER_FONT),
+        margin=dict(t=90, b=90, l=80, r=60),
+        shapes=[dict(
+            type="rect",
+            xref="paper",
+            yref="paper",
+            x0=0, y0=0, x1=1, y1=1,
+            line=dict(color=COLOR_BORDE, width=1)
+        )]
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # -----------------------------------------------------------
+    # 5) TABLA DE PARES MÁS Y MENOS CORRELACIONADOS
+    # -----------------------------------------------------------
+    pairs = []
+    cols = corr_matrix.columns.tolist()
+
+    for i in range(len(cols)):
+        for j in range(i + 1, len(cols)):
+            pairs.append({
+                'activo_1': cols[i],
+                'activo_2': cols[j],
+                'correlacion': corr_matrix.iloc[i, j]
+            })
+
+    df_pairs = pd.DataFrame(pairs).sort_values('correlacion', ascending=False)
+
+    with st.expander("Ver pares más y menos correlacionados"):
+        col_a, col_b = st.columns(2)
+
+        with col_a:
+            st.markdown("**Más correlacionados**")
+            st.dataframe(
+                df_pairs.head(5).assign(
+                    correlacion=lambda x: x['correlacion'].map(lambda v: f"{v:.2f}")
+                ),
+                use_container_width=True
+            )
+
+        with col_b:
+            st.markdown("**Menos correlacionados**")
+            st.dataframe(
+                df_pairs.tail(5).sort_values('correlacion', ascending=True).assign(
+                    correlacion=lambda x: x['correlacion'].map(lambda v: f"{v:.2f}")
+                ),
+                use_container_width=True
+            )
+
 # ---------------------------------------------------------------
 # PESTAÑAS PRINCIPALES
 # ---------------------------------------------------------------
@@ -1606,3 +1805,5 @@ with tab4:
     plot_risk_contribution(df_portfolio_ticker, all_stocks)
     st.divider()
     plot_drawdown_analysis(portfolio)
+    st.divider()
+    plot_correlation_heatmap(df_portfolio_ticker, all_stocks)
