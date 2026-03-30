@@ -609,15 +609,19 @@ def plot_annual_returns_table(portfolio, all_stocks, df_degiro, benchmark_ticker
     # -----------------------------------------------------------
     df_show = df_annual.copy()
 
-    df_show['Valor inicio (€)'] = df_show['Valor inicio (€)'].map(lambda x: f"{x:,.2f} €")
-    df_show['Valor fin (€)'] = df_show['Valor fin (€)'].map(lambda x: f"{x:,.2f} €")
-    df_show['Depósitos año (€)'] = df_show['Depósitos año (€)'].map(lambda x: f"{x:,.2f} €")
-    df_show['Dividendos año (€)'] = df_show['Dividendos año (€)'].map(lambda x: f"{x:,.2f} €")
-    df_show['XIRR cartera'] = df_show['XIRR cartera'].map(lambda x: f"{x:.2%}" if pd.notna(x) else "N/A")
-    df_show['Rentabilidad S&P 500'] = df_show['Rentabilidad S&P 500'].map(lambda x: f"{x:.2%}" if pd.notna(x) else "N/A")
-    df_show['Diferencia'] = df_annual['Diferencia'].map(lambda x: f"{x:+.2%}" if pd.notna(x) else "N/A")
+    # Año como texto para que no lo trate como número/miles
+    df_show['Año'] = df_show['Año'].astype(str)
 
-    st.dataframe(df_show, use_container_width=True)
+    # Formato con un solo decimal
+    df_show['Valor inicio (€)'] = df_show['Valor inicio (€)'].map(lambda x: f"{x:,.1f} €")
+    df_show['Valor fin (€)'] = df_show['Valor fin (€)'].map(lambda x: f"{x:,.1f} €")
+    df_show['Depósitos año (€)'] = df_show['Depósitos año (€)'].map(lambda x: f"{x:,.1f} €")
+    df_show['Dividendos año (€)'] = df_show['Dividendos año (€)'].map(lambda x: f"{x:,.1f} €")
+    df_show['XIRR cartera'] = df_show['XIRR cartera'].map(lambda x: f"{x:.1%}" if pd.notna(x) else "N/A")
+    df_show['Rentabilidad S&P 500'] = df_show['Rentabilidad S&P 500'].map(lambda x: f"{x:.1%}" if pd.notna(x) else "N/A")
+    df_show['Diferencia'] = df_annual['Diferencia'].map(lambda x: f"{x:+.1%}" if pd.notna(x) else "N/A")
+
+    st.dataframe(df_show, use_container_width=True, hide_index=True)
 
     # -----------------------------------------------------------
     # 8) METODOLOGÍA
@@ -2874,14 +2878,7 @@ with tab1:
     plot_income_evolution_table(portfolio, df_degiro)
     st.divider()
     assumptions = plot_projection_assumptions_table(portfolio, df_degiro)
-    plot_100k_projection(portfolio, df_degiro, assumptions=assumptions)
-    xirr = calculate_portfolio_xirr(portfolio, df_degiro)
-
-    st.metric(
-        "Rentabilidad anual real (XIRR)",
-        f"{xirr:.2%}" if pd.notna(xirr) else "N/A"
-    )
-    
+    plot_100k_projection(portfolio, df_degiro, assumptions=assumptions)    
 
 with tab2:
     plot_dividends_by_company(df_degiro)
