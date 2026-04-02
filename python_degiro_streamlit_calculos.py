@@ -19,7 +19,7 @@ def obtener_datos_procesados():
     col_names = ["date", "col1", "col2", "movimiento", "col3", "description", "col4", "moneda", "importe", "col5", "col6", "col7"]
 
     #df_hist = pd.read_csv(path_hist, sep=',', skiprows=1, names=col_names, decimal=".")
-    df_hist = pd.read_csv(path_new, sep=',', skiprows=1, names=col_names, decimal=",")
+    df_hist = pd.read_csv(path_hist, sep=',', skiprows=1, names=col_names, decimal=",")
     df_new = pd.read_csv(path_new, sep=',', skiprows=1, names=col_names, decimal=",")
 
     # %%
