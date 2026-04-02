@@ -13,12 +13,13 @@ def obtener_datos_procesados():
     # %%
     # CARGAR EL FICHERO CSV DE DEGIRO Y CAMBIAR NOMBRES DE COLUMNAS
 
-    path_hist = "INPUT/DEGIRO-CSV-ALL-HISTORY-2021-2024.csv"		# CARGA DE FICHERO HISTORICO
-    path_new  = "INPUT/DEGIRO-CSV-2025.csv"		# CARGA DE FICHERO CON NUEVOS DATOS
+    path_hist = "INPUT/Account-2021-2025.csv"		# CARGA DE FICHERO HISTORICO
+    path_new  = "INPUT/Account-2026.csv"		# CARGA DE FICHERO CON NUEVOS DATOS
 
     col_names = ["date", "col1", "col2", "movimiento", "col3", "description", "col4", "moneda", "importe", "col5", "col6", "col7"]
 
-    df_hist = pd.read_csv(path_hist, sep=',', skiprows=1, names=col_names, decimal=".")
+    #df_hist = pd.read_csv(path_hist, sep=',', skiprows=1, names=col_names, decimal=".")
+    df_hist = pd.read_csv(path_new, sep=',', skiprows=1, names=col_names, decimal=",")
     df_new = pd.read_csv(path_new, sep=',', skiprows=1, names=col_names, decimal=",")
 
     # %%
