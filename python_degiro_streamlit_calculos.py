@@ -135,24 +135,21 @@ def obtener_datos_procesados():
     # DOWNLOAD YAHOO FINANCE DATA
     # DESCARGO LOS DATOS DE YF PARA TODAS LAS STOCKS DESDE 07/2021 HASTA FECHA DE HOY
 
-    all_stock_data = pd.DataFrame()
-
-    select_cols = ["date", "ticker", "Close", "Dividends", "Volume"]
-
-    for ticker in ticker_list:
-        data = yf.Ticker(ticker)
-        data_hist = data.history(
-            start=date_start,
-            end=date_today
-        )
-        data_hist["ticker"] = ticker
-        data_hist["date"] = data_hist.index
-        data_hist["date"] = pd.to_datetime(data_hist["date"]).tz_localize(None)
-        data_hist["date"] = data_hist["date"].dt.normalize()
-        data_hist = data_hist[select_cols]
-        all_stock_data = pd.concat([all_stock_data, data_hist], ignore_index=True)
-
-    all_stock_data["date"] = pd.to_datetime(all_stock_data["date"])
+    all_stock_data = pd.DataFrame() 
+    
+    select_cols = ["date", "ticker", "Close", "Dividends", "Volume"] 
+    
+    for ticker in ticker_list: # <----------------- ACA HAY UN LOOP QUE PUEDE SER FUNCION
+        data = yf.Ticker(ticker) 
+        data_hist = data.history(start=date_start, end=date_today) 
+        data_hist['ticker'] = ticker 
+        data_hist['date'] = data_hist.index 
+        data_hist['date'] = pd.to_datetime(data_hist['date']) 
+        data_hist['date'] = data_hist['date'].dt.strftime('%Y-%m-%d') 
+        data_hist = data_hist[select_cols] 
+        all_stock_data = pd.concat([all_stock_data, data_hist], ignore_index=True) 
+        
+    all_stock_data['date'] = pd.to_datetime(all_stock_data['date'])
 
     # %%
     # CALCULAR POSICIONES
