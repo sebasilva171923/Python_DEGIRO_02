@@ -143,8 +143,7 @@ def obtener_datos_procesados():
         data = yf.Ticker(ticker)
         data_hist = data.history(
             start=date_start,
-            end=date_today,
-            auto_adjust=False
+            end=date_today
         )
         data_hist["ticker"] = ticker
         data_hist["date"] = data_hist.index
