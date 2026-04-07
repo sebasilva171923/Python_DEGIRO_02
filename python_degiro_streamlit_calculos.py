@@ -144,8 +144,7 @@ def obtener_datos_procesados():
         data_hist = data.history(
             start=date_start,
             end=date_today,
-            auto_adjust=False,
-            actions=True
+            auto_adjust=False
         )
         data_hist["ticker"] = ticker
         data_hist["date"] = data_hist.index
