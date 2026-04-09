@@ -671,8 +671,11 @@ def plot_income_evolution_table(portfolio, df_degiro):
     df = df.sort_values('year')
 
     # -----------------------------------------------------------
-    # 4) INCLUIR TAMBIÉN EL AÑO EN CURSO
+    # 4) EXCLUIR 2021 Y EL AÑO EN CURSO
     # -----------------------------------------------------------
+    current_year = pd.Timestamp.today().year
+    df = df[(df['year'] != 2021) & (df['year'] != current_year)].copy()
+
     if df.empty:
         st.info("No hay datos suficientes para mostrar ingresos.")
         return
@@ -729,9 +732,8 @@ def plot_income_evolution_table(portfolio, df_degiro):
     )
 
     # -----------------------------------------------------------
-    # 6) KPIs ARRIBA
+    # 7) KPIs ARRIBA
     # -----------------------------------------------------------
-
     st.markdown("#### Detalle por año")
 
     last_row = df.iloc[-1]
@@ -754,21 +756,17 @@ def plot_income_evolution_table(portfolio, df_degiro):
     )
 
     # -----------------------------------------------------------
-    # 7) TABLA
+    # 8) TABLA
     # -----------------------------------------------------------
     df_show = df.copy()
 
-    # Año como texto para evitar formatos raros
     df_show['year'] = df_show['year'].astype(str)
 
-    # Formato con 1 decimal
     df_show['depositos_anuales'] = df_show['depositos_anuales'].map(lambda x: f"{x:,.1f} €")
     df_show['dividendos_anuales'] = df_show['dividendos_anuales'].map(lambda x: f"{x:,.1f} €")
-
     df_show['dep_mensual'] = df_show['dep_mensual'].map(lambda x: f"{x:,.1f} €")
     df_show['div_mensual'] = df_show['div_mensual'].map(lambda x: f"{x:,.1f} €")
     df_show['ingreso_mensual_total'] = df_show['ingreso_mensual_total'].map(lambda x: f"{x:,.1f} €")
-
     df_show['total_anual'] = df_show['total_anual'].map(lambda x: f"{x:,.1f} €")
 
     df_show = df_show.rename(columns={
@@ -784,7 +782,7 @@ def plot_income_evolution_table(portfolio, df_degiro):
     st.dataframe(df_show, use_container_width=True, hide_index=True)
 
     # -----------------------------------------------------------
-    # 8) INSIGHT (muy útil)
+    # 9) INSIGHT
     # -----------------------------------------------------------
     with st.expander("Ver interpretación"):
         st.markdown("""
