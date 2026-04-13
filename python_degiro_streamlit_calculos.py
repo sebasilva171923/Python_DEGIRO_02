@@ -217,7 +217,11 @@ def obtener_datos_procesados():
                 continue
 
             data_hist = data_hist.reset_index()
-            data_hist["date"] = pd.to_datetime(data_hist["Date"]).dt.normalize()
+
+            data_hist["date"] = pd.to_datetime(data_hist["Date"], utc=True)\
+                                    .dt.tz_localize(None)\
+                                    .dt.normalize()
+
             data_hist["moneda"] = moneda
             data_hist["fx_rate"] = data_hist["Close"]
 
@@ -230,14 +234,15 @@ def obtener_datos_procesados():
 
 
     fx_tickers = {
-        "USD": "EURUSD=X",   # 1 EUR = X USD
-        "DKK": "EURDKK=X"    # 1 EUR = X DKK
+        "USD": "EURUSD=X",
+        "DKK": "EURDKK=X"
     }
 
     fx_rates = descargar_fx_rates(fx_tickers, date_start, date_today)
 
-    # Añadimos EUR con tipo 1
-    merged_df_final["date"] = pd.to_datetime(merged_df_final["date"])
+    merged_df_final["date"] = pd.to_datetime(merged_df_final["date"], utc=True)\
+                                .dt.tz_localize(None)\
+                                .dt.normalize()
 
     fechas = pd.DataFrame({
         "date": merged_df_final["date"].drop_duplicates().sort_values()
@@ -250,10 +255,6 @@ def obtener_datos_procesados():
     fx_rates = pd.concat([fx_rates, eur_rows], ignore_index=True)
     fx_rates = fx_rates.sort_values(["moneda", "date"])
     fx_rates["fx_rate"] = fx_rates.groupby("moneda")["fx_rate"].ffill()
-
-    # %%
-    # AL ULTIMO DF LE UNO TAMBIEN LA TABLA CON EL FX
-    # TAMBIEN CALCULO EL IMPORTE EN EUROS PARA CADA POSICION Y PARA CADA DIA
 
     merged_df_final_FX = pd.merge(
         merged_df_final,
