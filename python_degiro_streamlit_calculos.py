@@ -205,75 +205,38 @@ def obtener_datos_procesados():
     # GET FX INFO
     # DESCARGO LOS DATOS DE FX DESDE YAHOO
 
-    def descargar_fx_rates(fx_tickers, date_start, date_today):
-        fx_df = pd.DataFrame()
+    ticker_eur = ["EUR=X"]
 
-        for moneda, yahoo_ticker in fx_tickers.items():
-            data = yf.Ticker(yahoo_ticker)
-            data_hist = data.history(start=date_start, end=date_today)
+    eur_to_usd = pd.DataFrame()
 
-            if data_hist.empty:
-                print(f"Sin datos para {moneda} ({yahoo_ticker})")
-                continue
+    select_cols = ["date", "Close"]
 
-            data_hist = data_hist.reset_index()
+    for ticker in ticker_eur:			# <----------------- ACA HAY UN LOOP QUE PUEDE SER FUNCION
+        data = yf.Ticker(ticker)
+        data_hist = data.history(start=date_start, end=date_today)
+        data_hist['ticker'] = ticker
+        data_hist['date'] = data_hist.index
+        data_hist['date'] = pd.to_datetime(data_hist['date'])
+        data_hist['date'] = data_hist['date'].dt.strftime('%Y-%m-%d')
+        data_hist = data_hist[select_cols]
+        data_hist = data_hist.rename(columns={"Close": "fx_rate"})
+        eur_to_usd = pd.concat([eur_to_usd, data_hist], ignore_index=True)
 
-            data_hist["date"] = pd.to_datetime(data_hist["Date"], utc=True)\
-                                    .dt.tz_localize(None)\
-                                    .dt.normalize()
+    eur_to_usd['date'] = pd.to_datetime(eur_to_usd['date'])
 
-            data_hist["moneda"] = moneda
-            data_hist["fx_rate"] = data_hist["Close"]
+    # %%
+    # AL ULTIMO DF LE UNO TAMBIEN LA TABLA CON EL FX
+    # TAMBIEN CALCULO EL IMPORTE EN EUROS PARA CADA POSICION Y PARA CADA DIA
 
-            fx_df = pd.concat(
-                [fx_df, data_hist[["date", "moneda", "fx_rate"]]],
-                ignore_index=True
-            )
+    merged_df_final_FX = pd.merge(merged_df_final, eur_to_usd, on=['date'], how='left')
 
-        return fx_df
+    merged_df_final_FX['fx_rate'] = merged_df_final_FX['fx_rate'].fillna(method='ffill')
 
+    merged_df_final_FX['importe_EUR'] = merged_df_final_FX.apply(acciones_fxrate, axis=1)
 
-    fx_tickers = {
-        "USD": "EURUSD=X",
-        "DKK": "EURDKK=X"
-    }
+    #print(merged_df_final_FX.head())
 
-    fx_rates = descargar_fx_rates(fx_tickers, date_start, date_today)
-
-    merged_df_final["date"] = pd.to_datetime(merged_df_final["date"], utc=True)\
-                                .dt.tz_localize(None)\
-                                .dt.normalize()
-
-    fechas = pd.DataFrame({
-        "date": merged_df_final["date"].drop_duplicates().sort_values()
-    })
-
-    eur_rows = fechas.copy()
-    eur_rows["moneda"] = "EUR"
-    eur_rows["fx_rate"] = 1.0
-
-    fx_rates = pd.concat([fx_rates, eur_rows], ignore_index=True)
-    fx_rates = fx_rates.sort_values(["moneda", "date"])
-    fx_rates["fx_rate"] = fx_rates.groupby("moneda")["fx_rate"].ffill()
-
-    merged_df_final_FX = pd.merge(
-        merged_df_final,
-        fx_rates,
-        on=["date", "moneda"],
-        how="left"
-    )
-
-    def acciones_fxrate(row):
-        if pd.isna(row["fx_rate"]):
-            return np.nan
-        return row["importe"] / row["fx_rate"]
-
-    merged_df_final_FX["importe_EUR"] = merged_df_final_FX.apply(acciones_fxrate, axis=1)
-
-    merged_df_final_FX = merged_df_final_FX.groupby(
-        ['date', 'ticker', 'movimiento'],
-        dropna=False
-    ).agg({
+    merged_df_final_FX = merged_df_final_FX.groupby(['date', 'ticker', 'movimiento'], dropna=False).agg({
         'pos_portfolio': 'max',
         'Close': 'max',
         'moneda': 'max',
@@ -282,6 +245,7 @@ def obtener_datos_procesados():
     }).reset_index()
 
     round_cols = ['Close', 'fx_rate', 'importe_EUR']
+
     merged_df_final_FX = round_columns(merged_df_final_FX, round_cols)
 
     # %%
