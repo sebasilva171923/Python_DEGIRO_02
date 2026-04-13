@@ -70,13 +70,13 @@ def acciones_fxrate(row):									# <----------------- FUNCION PARA USAR DENTRO 
 
 #------------------------------------------------------------------------------------------------------------------------------------------
 
-def dividendos_fxrate(row):					# <----------------- FUNCION PARA USAR DENTRO DE LOOP
-    if row['moneda'] == "EUR":
-        return row['importe'] * 1
-    elif row['moneda'] == "USD":
-    	return row['importe'] * row['fx_rate']
+def acciones_fxrate(row):
+    if row["moneda"] == "EUR":
+        return row["importe"]
+    elif row["moneda"] in ["USD", "DKK"]:
+        return row["importe"] / row["fx_rate"]
     else:
-        return 0
+        return np.nan
 
 #------------------------------------------------------------------------------------------------------------------------------------------
 
