@@ -40,8 +40,12 @@ def obtener_datos_procesados():
                     "Retirada Cambio de Divisa"
                     ]
 
-    df = df[~df['description'].isnull()]
-    df = df[~df['importe'].isnull()]
+    #df = df[~df['description'].isnull()]
+    #df = df[~df['importe'].isnull()]
+
+    df["date"] = df["date"].replace(r"^\s*$", pd.NA, regex=True)
+
+    df = df.dropna(subset=["date", "description", "importe"])
 
     for text in text_filters:								# <----------------- ACA HAY UN LOOP QUE PUEDE SER FUNCION
         df = df[~df['description'].str.contains(text)]
