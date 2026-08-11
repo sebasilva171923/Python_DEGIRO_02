@@ -23,27 +23,29 @@ replace_dict = {
 }
 
 def reemplazar_tipos(df):
-					
-	for key, value in replace_dict.items():																	
-	  ventas_stocks = df['description'].str.contains(key)
-	  df.loc[ventas_stocks, ["tipo_movimiento"]] = value
-	
-	replace_depositos_mov = df['description'].str.contains("Deposit")
-	df.loc[replace_depositos_mov, ["movimiento"]] = "Deposito"
 
-	replace_depositos_tick = df['description'].str.contains("Deposit")
-	df.loc[replace_depositos_tick, ["ticker"]] = "Deposito"
+    # Reemplazar tipos de movimiento según description
+    for key, value in replace_dict.items():
+        ventas_stocks = df['description'].str.contains(key, na=False)
+        df.loc[ventas_stocks, "tipo_movimiento"] = value
 
-	replace_gastos = df['tipo_movimiento'].str.contains("COMISION")
-	df.loc[replace_gastos, ["ticker"]] = "Gastos"
+    # Identificar depósitos
+    replace_depositos = df['description'].str.contains("Deposit", na=False)
 
-	replace_gastos = df['tipo_movimiento'].str.contains("INTERESES")
-	df.loc[replace_gastos, ["ticker"]] = "Gastos"
+    df.loc[replace_depositos, "movimiento"] = "Deposito"
+    df.loc[replace_depositos, "ticker"] = "Deposito"
 
-	replace_gastos = df['tipo_movimiento'].str.contains("IMPUESTO")
-	df.loc[replace_gastos, ["ticker"]] = "Gastos"
+    # Identificar gastos
+    replace_gastos = df['tipo_movimiento'].str.contains("COMISION", na=False)
+    df.loc[replace_gastos, "ticker"] = "Gastos"
 
-	return df
+    replace_gastos = df['tipo_movimiento'].str.contains("INTERESES", na=False)
+    df.loc[replace_gastos, "ticker"] = "Gastos"
+
+    replace_gastos = df['tipo_movimiento'].str.contains("IMPUESTO", na=False)
+    df.loc[replace_gastos, "ticker"] = "Gastos"
+
+    return df
 
 #------------------------------------------------------------------------------------------------------------------------------------------
 
