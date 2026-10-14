@@ -1677,6 +1677,148 @@ def plot_price_with_trades(selected_ticker, df_prices, df_ops):
 # ---------------------------------------------------------------
 # NUEVA FUNCIÓN: ANÁLISIS POR POSICIÓN
 # ---------------------------------------------------------------
+
+
+def plot_bollinger_bands(selected_ticker, all_stocks, period=20, num_std=2):
+    st.subheader("📉 Bandas de Bollinger")
+
+    ticker = str(selected_ticker).strip().upper()
+
+    df = all_stocks.copy()
+    df['ticker_norm'] = df['ticker'].astype(str).str.strip().str.upper()
+
+    df = df[df['ticker_norm'] == ticker].copy()
+    df['date'] = pd.to_datetime(df['date'], errors='coerce')
+    df['Close'] = pd.to_numeric(df['Close'], errors='coerce')
+
+    df = (
+        df.dropna(subset=['date', 'Close'])
+          .sort_values('date')
+          .drop_duplicates(subset=['date'], keep='last')
+    )
+
+    if len(df) < period:
+        st.info("No hay suficientes cotizaciones para calcular Bollinger.")
+        return
+
+    # Cálculo de las bandas
+    df['SMA'] = df['Close'].rolling(window=period).mean()
+    df['STD'] = df['Close'].rolling(window=period).std(ddof=0)
+
+    df['Upper'] = df['SMA'] + num_std * df['STD']
+    df['Lower'] = df['SMA'] - num_std * df['STD']
+
+    df = df.dropna(subset=['SMA', 'Upper', 'Lower'])
+
+    if df.empty:
+        st.info("No se pudieron calcular las bandas.")
+        return
+
+    # Indicadores actuales
+    last = df.iloc[-1]
+    precio = last['Close']
+    sma = last['SMA']
+    upper = last['Upper']
+    lower = last['Lower']
+
+    ancho = upper - lower
+    pct_b = (precio - lower) / ancho if ancho > 0 else np.nan
+
+    c1, c2, c3 = st.columns(3)
+
+    c1.metric("Precio actual", f"{precio:,.2f}")
+    c2.metric("Media móvil SMA20", f"{sma:,.2f}")
+    c3.metric(
+        "Posición entre bandas (%B)",
+        f"{pct_b:.1%}" if pd.notna(pct_b) else "N/A"
+    )
+
+    # Interpretación orientativa
+    if pd.isna(pct_b):
+        diagnostico = "Bandas sin amplitud suficiente."
+    elif pct_b < 0:
+        diagnostico = "Precio por debajo de la banda inferior."
+    elif pct_b <= 0.2:
+        diagnostico = "Precio cercano a la banda inferior."
+    elif pct_b < 0.8:
+        diagnostico = "Precio dentro de la zona intermedia."
+    elif pct_b <= 1:
+        diagnostico = "Precio cercano a la banda superior."
+    else:
+        diagnostico = "Precio por encima de la banda superior."
+
+    st.caption(
+        f"{diagnostico} Indicador relativo, no señal automática de compra o venta."
+    )
+
+    # Gráfico Plotly
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=df['date'],
+        y=df['Upper'],
+        name='Banda superior',
+        mode='lines',
+        line=dict(color=COLOR_SECUNDARIO, width=1.5),
+        hovertemplate='%{x|%d/%m/%Y}<br>Superior: %{y:,.2f}<extra></extra>'
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=df['date'],
+        y=df['Lower'],
+        name='Banda inferior',
+        mode='lines',
+        fill='tonexty',
+        fillcolor='rgba(0,70,255,0.09)',
+        line=dict(color=COLOR_SECUNDARIO, width=1.5),
+        hovertemplate='%{x|%d/%m/%Y}<br>Inferior: %{y:,.2f}<extra></extra>'
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=df['date'],
+        y=df['SMA'],
+        name='Media móvil SMA20',
+        mode='lines',
+        line=dict(color=COLOR_AUX1, width=2, dash='dash')
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=df['date'],
+        y=df['Close'],
+        name='Precio',
+        mode='lines',
+        line=dict(color=COLOR_PRINCIPAL, width=2.5),
+        hovertemplate='%{x|%d/%m/%Y}<br>Precio: %{y:,.2f}<extra></extra>'
+    ))
+
+    fig.update_layout(
+        title=dict(
+            text=f"Bandas de Bollinger ({period}, {num_std}) - {ticker}",
+            x=0.5,
+            xanchor='center'
+        ),
+        xaxis=dict(
+            title="Fecha",
+            rangeslider=dict(visible=True)
+        ),
+        yaxis=dict(title="Precio (moneda de la cotización)"),
+        legend=dict(
+            orientation='h',
+            yanchor='bottom',
+            y=1.02,
+            xanchor='center',
+            x=0.5
+        ),
+        hovermode='x unified',
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        hoverlabel=dict(bgcolor=HOVER_BG, font=HOVER_FONT),
+        margin=dict(t=90, b=60, l=60, r=40)
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
 def analysis_by_position(df_degiro, all_stocks, df_portfolio_ticker):
     st.subheader("📊 Análisis por Acción")
 
@@ -1837,10 +1979,20 @@ def analysis_by_position(df_degiro, all_stocks, df_portfolio_ticker):
     st.subheader("📈 Evolución del Precio y Operaciones")
 
     if 'ticker' in df_emp.columns and df_emp['ticker'].notna().any():
-        ticker_sel = df_emp['ticker'].dropna().iloc[0]
-        plot_price_with_trades(ticker_sel, all_stocks, df_emp)
+    ticker_sel = df_emp['ticker'].dropna().iloc[0]
+
+    # Gráfico original de precio y operaciones
+    plot_price_with_trades(ticker_sel, all_stocks, df_emp)
+
+    st.divider()
+
+    # Nuevo gráfico de Bandas de Bollinger
+    plot_bollinger_bands(ticker_sel, all_stocks)
+
     else:
-        st.info("No se encontró el ticker para esta empresa, no se puede dibujar el gráfico de precio.")
+        st.info(
+            "No se encontró el ticker para esta empresa."
+        )
 
 # -------------------------------------------------------------------------------------------------------------------------- #
 
