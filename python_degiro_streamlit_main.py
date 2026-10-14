@@ -1979,15 +1979,15 @@ def analysis_by_position(df_degiro, all_stocks, df_portfolio_ticker):
     st.subheader("📈 Evolución del Precio y Operaciones")
 
     if 'ticker' in df_emp.columns and df_emp['ticker'].notna().any():
-    ticker_sel = df_emp['ticker'].dropna().iloc[0]
+        ticker_sel = df_emp['ticker'].dropna().iloc[0]
 
-    # Gráfico original de precio y operaciones
-    plot_price_with_trades(ticker_sel, all_stocks, df_emp)
+        # Gráfico original de precio y operaciones
+        plot_price_with_trades(ticker_sel, all_stocks, df_emp)
 
-    st.divider()
+        st.divider()
 
-    # Nuevo gráfico de Bandas de Bollinger
-    plot_bollinger_bands(ticker_sel, all_stocks)
+        # Nuevo gráfico de Bandas de Bollinger
+        plot_bollinger_bands(ticker_sel, all_stocks)
 
     else:
         st.info(
