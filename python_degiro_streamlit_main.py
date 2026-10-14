@@ -9,6 +9,7 @@ from python_degiro_streamlit_calculos import obtener_datos_procesados
 import plotly.graph_objects as go
 import io
 import zipfile
+from plotly.subplots import make_subplots
 
 # %%
 st.title("📊 Mi App Streamlit")
@@ -1537,136 +1538,357 @@ def plot_dividends_yearly_growth(df_degiro):
 
 
 # -------- NUEVO: GRÁFICO PRECIO + COMPRAS/VENTAS ----------------
+
 def plot_price_with_trades(selected_ticker, df_prices, df_ops):
-    # --- Normalizar ticker seleccionado ---
+
     selected_norm = str(selected_ticker).strip().upper()
 
-    # --- Copia y normalización de df_prices ---
+    # -----------------------------------------------------------
+    # 1) PREPARAR HISTÓRICO DE PRECIOS
+    # -----------------------------------------------------------
     df_prices = df_prices.copy()
     df_prices['ticker_norm'] = (
-        df_prices['ticker']
-        .astype(str)
-        .str.strip()
-        .str.upper()
+        df_prices['ticker'].astype(str).str.strip().str.upper()
     )
 
-    # --- Filtrar datos del ticker en histórico de precios ---
     px = df_prices[df_prices['ticker_norm'] == selected_norm].copy()
+
     if px.empty:
-        st.error(f"No hay histórico de precios para el ticker '{selected_ticker}'.")
-        st.write("Algunos tickers disponibles en df_prices:",
-                 df_prices['ticker'].drop_duplicates().sort_values().head(20).tolist())
+        st.error(f"No hay histórico para '{selected_ticker}'.")
         return
 
-    px['date'] = pd.to_datetime(px['date'])
-    px.sort_values('date', inplace=True)
+    px['date'] = pd.to_datetime(px['date'], errors='coerce')
+    px['Close'] = pd.to_numeric(px['Close'], errors='coerce')
 
-    # --- Operaciones (ya filtradas por empresa/ticker desde fuera) ---
+    px = (
+        px.dropna(subset=['date', 'Close'])
+          .sort_values('date')
+          .drop_duplicates(subset='date', keep='last')
+    )
+
+    if px.empty:
+        st.info("No hay precios válidos para este valor.")
+        return
+
+    # -----------------------------------------------------------
+    # 2) CALCULAR RSI (14) - MÉTODO DE WILDER
+    # -----------------------------------------------------------
+    periodo_rsi = 14
+
+    delta = px['Close'].diff()
+    ganancias = delta.clip(lower=0)
+    perdidas = -delta.clip(upper=0)
+
+    # Inicialización con promedio simple de 14 variaciones
+    avg_gain = pd.Series(np.nan, index=px.index, dtype=float)
+    avg_loss = pd.Series(np.nan, index=px.index, dtype=float)
+
+    if len(px) > periodo_rsi:
+        avg_gain.iloc[periodo_rsi] = ganancias.iloc[
+            1:periodo_rsi + 1
+        ].mean()
+
+        avg_loss.iloc[periodo_rsi] = perdidas.iloc[
+            1:periodo_rsi + 1
+        ].mean()
+
+        # Suavizado de Wilder
+        for i in range(periodo_rsi + 1, len(px)):
+            avg_gain.iloc[i] = (
+                avg_gain.iloc[i - 1] * (periodo_rsi - 1)
+                + ganancias.iloc[i]
+            ) / periodo_rsi
+
+            avg_loss.iloc[i] = (
+                avg_loss.iloc[i - 1] * (periodo_rsi - 1)
+                + perdidas.iloc[i]
+            ) / periodo_rsi
+
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    px['RSI'] = 100 - (100 / (1 + rs))
+
+    # Casos especiales: sin pérdidas o sin variación
+    px.loc[
+        (avg_loss == 0) & (avg_gain > 0), 'RSI'
+    ] = 100
+
+    px.loc[
+        (avg_loss == 0) & (avg_gain == 0), 'RSI'
+    ] = 50
+
+    # -----------------------------------------------------------
+    # 3) PREPARAR OPERACIONES
+    # -----------------------------------------------------------
     ops = df_ops.copy()
-    if ops.empty:
-        st.info("No hay operaciones para este valor.")
-        return
 
-    ops['date'] = pd.to_datetime(ops['date']).dt.normalize()
-    ops['tipo_movimiento'] = ops['tipo_movimiento'].str.upper().str.strip()
+    buys = pd.DataFrame()
+    sells = pd.DataFrame()
 
-    # Derivamos cantidad e importe (por si no hay columnas específicas)
-    ops['cantidad'] = ops['num_acciones'].abs()
-    ops['importe'] = ops['importe_EUR'].abs()
-    ops['precio_op'] = np.where(
-        ops['cantidad'] > 0,
-        ops['importe'] / ops['cantidad'],
-        np.nan
+    if not ops.empty:
+        ops['date'] = pd.to_datetime(
+            ops['date'], errors='coerce'
+        ).dt.normalize()
+
+        ops['tipo_movimiento'] = (
+            ops['tipo_movimiento'].astype(str).str.upper().str.strip()
+        )
+
+        ops = ops.dropna(subset=['date'])
+
+        ops = ops[
+            ops['tipo_movimiento'].str.contains(
+                'COMPRA|VENTA', regex=True
+            )
+        ].copy()
+
+        ops['cantidad'] = ops['num_acciones'].abs()
+        ops['importe'] = ops['importe_EUR'].abs()
+
+        ops['precio_op'] = np.where(
+            ops['cantidad'] > 0,
+            ops['importe'] / ops['cantidad'],
+            np.nan
+        )
+
+        if not ops.empty:
+            agg_ops = (
+                ops.groupby(
+                    ['date', 'tipo_movimiento'],
+                    as_index=False
+                )
+                .agg({
+                    'cantidad': 'sum',
+                    'importe': 'sum'
+                })
+            )
+
+            agg_ops['precio_op'] = np.where(
+                agg_ops['cantidad'] > 0,
+                agg_ops['importe'] / agg_ops['cantidad'],
+                np.nan
+            )
+
+            px_day = px[['date', 'Close']].copy()
+            px_day['date'] = px_day['date'].dt.normalize()
+            px_day = px_day.rename(columns={'Close': 'close'})
+
+            agg_ops = pd.merge(
+                agg_ops, px_day, on='date', how='left'
+            )
+
+            buys = agg_ops[
+                agg_ops['tipo_movimiento'].str.contains('COMPRA')
+            ].copy()
+
+            sells = agg_ops[
+                agg_ops['tipo_movimiento'].str.contains('VENTA')
+            ].copy()
+
+    # -----------------------------------------------------------
+    # 4) CREAR GRÁFICO CON DOS PANELES
+    # -----------------------------------------------------------
+    fig = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.07,
+        row_heights=[0.70, 0.30],
+        subplot_titles=(
+            "Evolución del Precio y Operaciones",
+            "RSI (14 períodos)"
+        )
     )
 
-    # Agregamos por día y tipo (por si hay varias órdenes en el mismo día)
-    agg_ops = (
-        ops
-        .groupby(['date', 'tipo_movimiento'], as_index=False)
-        .agg({'cantidad': 'sum', 'precio_op': 'mean', 'importe': 'sum'})
+    # PRECIO
+    fig.add_trace(
+        go.Scatter(
+            x=px['date'],
+            y=px['Close'],
+            mode='lines',
+            name='Precio cierre',
+            line=dict(color=COLOR_PRINCIPAL, width=2.5),
+            hovertemplate=(
+                "<b>%{x|%d/%m/%Y}</b><br>"
+                "Cierre: %{y:,.2f}<extra></extra>"
+            )
+        ),
+        row=1, col=1
     )
 
-    # Traer el cierre de ese día
-    px_day = px[['date', 'Close']].copy()
-    px_day.rename(columns={'Close': 'close'}, inplace=True)
-    agg_ops = pd.merge(agg_ops, px_day, on='date', how='left')
-
-    # Separar compras / ventas
-    buys = agg_ops[agg_ops['tipo_movimiento'].str.contains('COMPRA')].copy()
-    sells = agg_ops[agg_ops['tipo_movimiento'].str.contains('VENTA')].copy()
-
-    fig = go.Figure()
-
-    # Línea de precios
-    fig.add_trace(go.Scatter(
-        x=px['date'], y=px['Close'],
-        mode='lines',
-        name='Precio cierre',
-        line=dict(width=2)
-    ))
-
-    # Compras
+    # COMPRAS
     if not buys.empty:
-        fig.add_trace(go.Scatter(
-            x=buys['date'],
-            y=buys['close'].fillna(buys['precio_op']),
-            mode='markers',
-            name='Compra',
-            marker=dict(color='rgba(220,0,0,0.95)',
-                        size=14,
-                        line=dict(color='white', width=1)),
-            hovertemplate=(
-                "<b>%{x|%Y-%m-%d}</b><br>"
-                "Tipo: Compra<br>"
-                "Precio op: %{customdata[0]:,.2f} €<br>"
-                "Cierre: %{y:,.2f} €<br>"
-                "Cantidad total: %{customdata[1]:,.2f}<br>"
-                "Importe: %{customdata[2]:,.2f} €<extra></extra>"
+        fig.add_trace(
+            go.Scatter(
+                x=buys['date'],
+                y=buys['close'].fillna(buys['precio_op']),
+                mode='markers',
+                name='Compra',
+                marker=dict(
+                    color='rgba(220,0,0,0.95)',
+                    size=14,
+                    line=dict(color='white', width=1)
+                ),
+                customdata=np.stack([
+                    buys['precio_op'],
+                    buys['cantidad'],
+                    buys['importe']
+                ], axis=1),
+                hovertemplate=(
+                    "<b>%{x|%Y-%m-%d}</b><br>"
+                    "Tipo: Compra<br>"
+                    "Precio op: %{customdata[0]:,.2f}<br>"
+                    "Cierre: %{y:,.2f}<br>"
+                    "Cantidad: %{customdata[1]:,.2f}<br>"
+                    "Importe: %{customdata[2]:,.2f} €"
+                    "<extra></extra>"
+                )
             ),
-            customdata=np.stack(
-                [buys['precio_op'], buys['cantidad'], buys['importe']], axis=1
-            )
-        ))
+            row=1, col=1
+        )
 
-    # Ventas
+    # VENTAS
     if not sells.empty:
-        fig.add_trace(go.Scatter(
-            x=sells['date'],
-            y=sells['close'].fillna(sells['precio_op']),
-            mode='markers',
-            name='Venta',
-            marker=dict(color='rgba(0,180,0,0.95)',
-                        size=14,
-                        line=dict(color='white', width=1)),
-            hovertemplate=(
-                "<b>%{x|%Y-%m-%d}</b><br>"
-                "Tipo: Venta<br>"
-                "Precio op: %{customdata[0]:,.2f} €<br>"
-                "Cierre: %{y:,.2f} €<br>"
-                "Cantidad total: %{customdata[1]:,.2f}<br>"
-                "Importe: %{customdata[2]:,.2f} €<extra></extra>"
+        fig.add_trace(
+            go.Scatter(
+                x=sells['date'],
+                y=sells['close'].fillna(sells['precio_op']),
+                mode='markers',
+                name='Venta',
+                marker=dict(
+                    color='rgba(0,180,0,0.95)',
+                    size=14,
+                    line=dict(color='white', width=1)
+                ),
+                customdata=np.stack([
+                    sells['precio_op'],
+                    sells['cantidad'],
+                    sells['importe']
+                ], axis=1),
+                hovertemplate=(
+                    "<b>%{x|%Y-%m-%d}</b><br>"
+                    "Tipo: Venta<br>"
+                    "Precio op: %{customdata[0]:,.2f}<br>"
+                    "Cierre: %{y:,.2f}<br>"
+                    "Cantidad: %{customdata[1]:,.2f}<br>"
+                    "Importe: %{customdata[2]:,.2f} €"
+                    "<extra></extra>"
+                )
             ),
-            customdata=np.stack(
-                [sells['precio_op'], sells['cantidad'], sells['importe']], axis=1
+            row=1, col=1
+        )
+
+    # -----------------------------------------------------------
+    # 5) PANEL INFERIOR: RSI
+    # -----------------------------------------------------------
+    fig.add_trace(
+        go.Scatter(
+            x=px['date'],
+            y=px['RSI'],
+            mode='lines',
+            name='RSI (14)',
+            line=dict(color=COLOR_SECUNDARIO, width=2.5),
+            hovertemplate=(
+                "<b>%{x|%d/%m/%Y}</b><br>"
+                "RSI: %{y:.2f}<extra></extra>"
             )
-        ))
+        ),
+        row=2, col=1
+    )
+
+    # Niveles de referencia
+    fig.add_hline(
+        y=70,
+        row=2, col=1,
+        line_color='#D62728',
+        line_dash='dash',
+        line_width=1.5
+    )
+
+    fig.add_hline(
+        y=30,
+        row=2, col=1,
+        line_color='#00AA55',
+        line_dash='dash',
+        line_width=1.5
+    )
+
+    fig.add_hrect(
+        y0=30, y1=70,
+        row=2, col=1,
+        fillcolor=COLOR_AUX1,
+        opacity=0.08,
+        line_width=0
+    )
+
+    # -----------------------------------------------------------
+    # 6) CONFIGURACIÓN VISUAL
+    # -----------------------------------------------------------
+    fig.update_yaxes(
+        title_text="Precio",
+        gridcolor='rgba(200,200,200,0.2)',
+        row=1, col=1
+    )
+
+    fig.update_yaxes(
+        title_text="RSI",
+        range=[0, 100],
+        tickvals=[0, 30, 50, 70, 100],
+        gridcolor='rgba(200,200,200,0.2)',
+        row=2, col=1
+    )
+
+    fig.update_xaxes(
+        title_text="Fecha",
+        row=2, col=1
+    )
 
     fig.update_layout(
-        xaxis=dict(title="Fecha"),
-        yaxis=dict(title="Precio (€)", gridcolor='rgba(200,200,200,0.2)'),
-        legend=dict(orientation='h', yanchor='bottom', y=1.02,
-                    xanchor='center', x=0.5),
+        height=750,
+        hovermode='x',
+        legend=dict(
+            orientation='h',
+            yanchor='bottom',
+            y=1.06,
+            xanchor='center',
+            x=0.5
+        ),
         plot_bgcolor='rgba(0,0,0,0)',
         paper_bgcolor='rgba(0,0,0,0)',
         hoverlabel=dict(
-            bgcolor='rgba(40,40,40,0.85)',
-            font=dict(color='white', size=13),
-            bordercolor='rgba(255,255,255,0.2)'
+            bgcolor=HOVER_BG,
+            font=HOVER_FONT
         ),
-        margin=dict(t=80, b=60, l=60, r=40)
+        margin=dict(t=110, b=60, l=60, r=40)
     )
 
     st.plotly_chart(fig, use_container_width=True)
+
+    # -----------------------------------------------------------
+    # 7) INDICADOR RSI ACTUAL
+    # -----------------------------------------------------------
+    rsi_valid = px['RSI'].dropna()
+
+    if not rsi_valid.empty:
+        rsi_actual = rsi_valid.iloc[-1]
+
+        if rsi_actual < 30:
+            diagnostico = "Posible sobreventa"
+        elif rsi_actual > 70:
+            diagnostico = "Posible sobrecompra"
+        else:
+            diagnostico = "Zona neutral"
+
+        c1, c2 = st.columns(2)
+
+        c1.metric("RSI actual (14)", f"{rsi_actual:.2f}")
+        c2.metric("Interpretación", diagnostico)
+
+        st.caption(
+            "El RSI es un indicador de momentum. "
+            "Los niveles 30 y 70 son orientativos y "
+            "no constituyen señales automáticas de compra o venta."
+        )
+
 
 # -------------------------------------------------------------------------------------------------------------------------- #
 
