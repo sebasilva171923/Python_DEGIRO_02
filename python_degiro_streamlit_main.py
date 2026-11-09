@@ -10,6 +10,7 @@ import plotly.graph_objects as go
 import io
 import zipfile
 from plotly.subplots import make_subplots
+from collections import deque
 
 # %%
 st.title("📊 Mi App Streamlit")
@@ -1278,7 +1279,433 @@ def plot_100k_projection(portfolio, df_degiro, assumptions=None, target_value=10
             use_container_width=True, hide_index=True
         )
 
+
+def plot_portfolio_positions_tables(df_degiro, df_portfolio_ticker):
+
+    st.subheader("📊 Rentabilidad por Posición")
+
+    # -----------------------------------------------------------
+    # 1) PREPARAR MOVIMIENTOS
+    # -----------------------------------------------------------
+    df = df_degiro.copy()
+
+    required = [
+        "date", "movimiento", "ticker", "tipo_movimiento",
+        "num_acciones", "importe_EUR"
+    ]
+
+    missing = [c for c in required if c not in df.columns]
+
+    if missing:
+        st.error(f"Faltan columnas en df_degiro: {missing}")
+        return
+
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df["ticker"] = df["ticker"].astype("string").str.strip()
+    df["tipo_movimiento"] = (
+        df["tipo_movimiento"].astype(str).str.strip().str.upper()
+    )
+
+    for col in ["num_acciones", "importe_EUR"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    valid_types = [
+        "COMPRA ACCIONES",
+        "VENTA ACCIONES",
+        "DIVIDENDO"
+    ]
+
+    df = df[
+        df["tipo_movimiento"].isin(valid_types)
+        & df["ticker"].notna()
+        & df["date"].notna()
+    ].copy()
+
+    if df.empty:
+        st.info("No se encontraron operaciones para analizar.")
+        return
+
+    df = df.sort_values("date", kind="stable")
+
+    # -----------------------------------------------------------
+    # 2) VALOR ACTUAL POR TICKER
+    # -----------------------------------------------------------
+    pt = df_portfolio_ticker.copy()
+
+    required_pt = ["date", "ticker", "importe_EUR"]
+    missing_pt = [c for c in required_pt if c not in pt.columns]
+
+    if missing_pt:
+        st.error(f"Faltan columnas en df_portfolio_ticker: {missing_pt}")
+        return
+
+    pt["date"] = pd.to_datetime(pt["date"], errors="coerce")
+    pt["ticker"] = pt["ticker"].astype("string").str.strip()
+    pt["importe_EUR"] = pd.to_numeric(
+        pt["importe_EUR"], errors="coerce"
+    )
+
+    pt = pt.dropna(subset=["date", "ticker", "importe_EUR"])
+
+    last_dates = pt.groupby("ticker")["date"].transform("max")
+    pt_last = pt[pt["date"].eq(last_dates)]
+
+    current_values = (
+        pt_last.groupby("ticker")["importe_EUR"].sum().to_dict()
+    )
+
+    # -----------------------------------------------------------
+    # 3) CALCULAR COSTES FIFO Y RESULTADOS
+    # -----------------------------------------------------------
+    open_rows = []
+    closed_rows = []
+    errors = []
+    eps = 1e-8
+
+    for ticker, g in df.groupby("ticker", sort=True):
+
+        names = g["movimiento"].dropna()
+        nombre = str(names.iloc[-1]) if not names.empty else ticker
+
+        lots = deque()
+        qty_held = 0.0
+
+        sale_proceeds = 0.0
+        sale_cost = 0.0
+
+        dividends = g.loc[
+            g["tipo_movimiento"] == "DIVIDENDO",
+            "importe_EUR"
+        ].sum()
+
+        valid = True
+
+        for _, tx in g.iterrows():
+
+            kind = tx["tipo_movimiento"]
+
+            if kind == "DIVIDENDO":
+                continue
+
+            qty = tx["num_acciones"]
+            amount = tx["importe_EUR"]
+
+            if pd.isna(qty) or pd.isna(amount) or abs(qty) <= eps:
+                errors.append(
+                    f"{ticker}: operación con cantidad o importe inválido."
+                )
+                valid = False
+                break
+
+            qty = abs(float(qty))
+            amount = float(amount)
+
+            if kind == "COMPRA ACCIONES":
+
+                unit_cost = abs(amount) / qty
+                lots.append([qty, unit_cost])
+                qty_held += qty
+
+            elif kind == "VENTA ACCIONES":
+
+                if qty > qty_held + eps:
+                    errors.append(
+                        f"{ticker}: las ventas superan las acciones "
+                        "disponibles. Revisar operaciones históricas."
+                    )
+                    valid = False
+                    break
+
+                remaining = qty
+                cost_sold = 0.0
+
+                while remaining > eps and lots:
+
+                    lot_qty, lot_cost = lots[0]
+                    used = min(remaining, lot_qty)
+
+                    cost_sold += used * lot_cost
+                    remaining -= used
+                    lot_qty -= used
+
+                    if lot_qty <= eps:
+                        lots.popleft()
+                    else:
+                        lots[0][0] = lot_qty
+
+                qty_held -= qty
+                sale_proceeds += amount
+                sale_cost += cost_sold
+
+        if not valid:
+            continue
+
+        current_cost = sum(
+            qty * unit_cost for qty, unit_cost in lots
+        )
+
+        has_open = qty_held > eps
+        has_sales = sale_cost > eps
+
+        # Dividendos asignados una sola vez:
+        # Si el ticker sigue abierto, todos van a cartera actual.
+        div_open = dividends if has_open else 0.0
+        div_closed = 0.0 if has_open else dividends
+
+        # -------------------------------------------------------
+        # POSICIONES ABIERTAS
+        # -------------------------------------------------------
+        if has_open:
+
+            if ticker not in current_values:
+                errors.append(
+                    f"{ticker}: no se encontró valoración actual "
+                    "en df_portfolio_ticker."
+                )
+            else:
+                market_value = current_values[ticker]
+
+                variation = market_value - current_cost
+                variation_pct = (
+                    variation / current_cost
+                    if current_cost > 0 else np.nan
+                )
+
+                total_result = variation + div_open
+                total_pct = (
+                    total_result / current_cost
+                    if current_cost > 0 else np.nan
+                )
+
+                open_rows.append({
+                    "Acción": nombre,
+                    "Ticker": ticker,
+                    "Valor actual (€)": market_value,
+                    "Coste (€)": current_cost,
+                    "Variación (€)": variation,
+                    "Variación (%)": variation_pct,
+                    "Dividendos (€)": div_open,
+                    "Resultado total (€)": total_result,
+                    "Resultado total (%)": total_pct
+                })
+
+        # -------------------------------------------------------
+        # POSICIONES VENDIDAS (INCLUYE VENTAS PARCIALES)
+        # -------------------------------------------------------
+        if has_sales:
+
+            realized = sale_proceeds - sale_cost
+            realized_pct = (
+                realized / sale_cost
+                if sale_cost > 0 else np.nan
+            )
+
+            total_result = realized + div_closed
+            total_pct = (
+                total_result / sale_cost
+                if sale_cost > 0 else np.nan
+            )
+
+            closed_rows.append({
+                "Acción": nombre,
+                "Ticker": ticker,
+                "Importe vendido (€)": sale_proceeds,
+                "Coste (€)": sale_cost,
+                "Variación (€)": realized,
+                "Variación (%)": realized_pct,
+                "Dividendos (€)": div_closed,
+                "Resultado total (€)": total_result,
+                "Resultado total (%)": total_pct
+            })
+
+    # -----------------------------------------------------------
+    # 4) FORMATO DE NÚMEROS
+    # -----------------------------------------------------------
+    def fmt_number(value, signed=False, percent=False):
+
+        if pd.isna(value):
+            return "N/A"
+
+        if percent:
+            text = f"{value:+.2%}" if signed else f"{value:.2%}"
+        else:
+            text = (
+                f"{value:+,.2f}" if signed
+                else f"{value:,.2f}"
+            )
+
+        # Formato europeo
+        text = text.replace(",", "X").replace(".", ",").replace("X", ".")
+
+        return text if percent else text + " €"
+
+    def render_table(rows, value_column, total_label):
+
+        if not rows:
+            st.info("No hay posiciones para mostrar.")
+            return
+
+        data = pd.DataFrame(rows)
+
+        # Orden por resultado total descendente
+        data = data.sort_values(
+            "Resultado total (€)", ascending=False
+        ).reset_index(drop=True)
+
+        numeric_columns = [
+            value_column,
+            "Coste (€)",
+            "Variación (€)",
+            "Dividendos (€)",
+            "Resultado total (€)"
+        ]
+
+        totals = {
+            "Acción": total_label,
+            "Ticker": "",
+        }
+
+        for col in numeric_columns:
+            totals[col] = data[col].sum()
+
+        total_cost = totals["Coste (€)"]
+
+        totals["Variación (%)"] = (
+            totals["Variación (€)"] / total_cost
+            if total_cost > 0 else np.nan
+        )
+
+        totals["Resultado total (%)"] = (
+            totals["Resultado total (€)"] / total_cost
+            if total_cost > 0 else np.nan
+        )
+
+        data = pd.concat(
+            [data, pd.DataFrame([totals])],
+            ignore_index=True
+        )
+
+        total_idx = len(data) - 1
+
+        signed_cols = [
+            "Variación (€)",
+            "Variación (%)",
+            "Resultado total (€)",
+            "Resultado total (%)"
+        ]
+
+        percent_cols = [
+            "Variación (%)",
+            "Resultado total (%)"
+        ]
+
+        formatters = {}
+
+        for col in numeric_columns + percent_cols:
+            formatters[col] = (
+                lambda x, c=col: fmt_number(
+                    x,
+                    signed=c in signed_cols,
+                    percent=c in percent_cols
+                )
+            )
+
+        formatters["Dividendos (€)"] = (
+            lambda x: fmt_number(x)
+            if pd.notna(x) and x != 0 else "N/A"
+        )
+
+        # -------------------------------------------------------
+        # 5) COLORES Y FILAS ALTERNADAS
+        # -------------------------------------------------------
+        def style_row(row):
+
+            is_total = row.name == total_idx
+
+            if is_total:
+                bg = "#263445"
+            elif row.name % 2 == 0:
+                bg = "#18212D"
+            else:
+                bg = "#24303E"
+
+            styles = []
+
+            for col in row.index:
+
+                style = f"background-color: {bg};"
+
+                if is_total:
+                    style += "font-weight: bold;"
+                    style += "border-top: 2px solid #66788A;"
+
+                if col in signed_cols:
+                    val = row[col]
+
+                    if pd.notna(val):
+                        if val > 0:
+                            style += "color: #00CC66;"
+                        elif val < 0:
+                            style += "color: #FF4B4B;"
+                        else:
+                            style += "color: #B0B0B0;"
+                else:
+                    style += "color: #E6E6E6;"
+
+                styles.append(style)
+
+            return styles
+
+        styled = (
+            data.style
+            .format(formatters)
+            .apply(style_row, axis=1)
+        )
+
+        st.dataframe(
+            styled,
+            use_container_width=True,
+            hide_index=True
+        )
+
+    # -----------------------------------------------------------
+    # 6) TABLA CARTERA ACTUAL
+    # -----------------------------------------------------------
+    st.markdown("#### 📈 Cartera Actual — Posiciones Abiertas")
+
+    render_table(
+        open_rows,
+        "Valor actual (€)",
+        "TOTAL CARTERA ACTUAL"
+    )
+
+    st.divider()
+
+    # -----------------------------------------------------------
+    # 7) TABLA POSICIONES CERRADAS
+    # -----------------------------------------------------------
+    st.markdown("#### 📉 Histórico — Posiciones Vendidas")
+
+    render_table(
+        closed_rows,
+        "Importe vendido (€)",
+        "TOTAL POSICIONES VENDIDAS"
+    )
+
+    # -----------------------------------------------------------
+    # 8) ADVERTENCIAS
+    # -----------------------------------------------------------
+    if errors:
+        with st.expander(
+            f"⚠️ Revisar {len(errors)} incidencias de datos"
+        ):
+            for error in errors:
+                st.warning(error)
+
+
 def calculate_portfolio_xirr(portfolio, df_degiro):
+
+    
     df = portfolio.copy()
     df['date'] = pd.to_datetime(df['date'])
 
@@ -3248,12 +3675,14 @@ tab1, tab2, tab3, tab4 = st.tabs(["📈 Evolución Portafolio", "💶 Análisis 
 with tab1:
     plot_portfolio_trend(portfolio)
     st.divider()
+    plot_portfolio_positions_tables(df_degiro, df_portfolio_ticker)
+    st.divider()
     plot_portfolio_data(portfolio, all_stocks)
     st.divider()
     plot_semester_snapshots(portfolio)
     st.divider()
-    plot_annual_returns_table(portfolio, all_stocks, df_degiro)
-    st.divider()
+    #plot_annual_returns_table(portfolio, all_stocks, df_degiro)
+    #st.divider()
     plot_income_evolution_table(portfolio, df_degiro)
     st.divider()
     assumptions = plot_projection_assumptions_table(portfolio, df_degiro)
